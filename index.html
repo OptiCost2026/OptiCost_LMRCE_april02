@@ -529,14 +529,8 @@
                     <button class="export-btn ebtn-png" onclick="saveReportImage('png')">
                         <span class="eico">📷</span><span>PNG Image</span><span class="elbl">View &amp; long-press to save</span>
                     </button>
-                    <button class="export-btn ebtn-doc" onclick="saveReportImage('doc')">
-                        <span class="eico">📄</span><span>HTML Report</span><span class="elbl">Open &amp; copy text</span>
-                    </button>
-                    <button class="export-btn ebtn-csv" onclick="doSave()">
-                        <span class="eico">📊</span><span>CSV Data</span><span class="elbl">Copy &amp; paste to Sheets</span>
-                    </button>
-                    <button class="export-btn ebtn-share" onclick="shareResultsText()">
-                        <span class="eico">↗</span><span>Share Text</span><span class="elbl">WhatsApp / Gmail / etc</span>
+                    <button class="export-btn ebtn-doc" onclick="saveReportWord()">
+                        <span class="eico">📝</span><span>Word .doc</span><span class="elbl">Microsoft Word document</span>
                     </button>
                 </div>
                 <div style="margin-top:8px;background:var(--inp);border-radius:8px;padding:8px 10px;font-size:.63rem;color:var(--muted);line-height:1.8">
@@ -601,7 +595,7 @@
 
     <div class="actbar" id="global-actbar">
         <button class="btn-calc" onclick="doCalc()">⚡ Calculate</button>
-        <button class="btn-save" onclick="doSave()">💾 Save CSV</button>
+        <button class="btn-save" onclick="doSaveXLSX()">💾 Save Excel</button>
         <button class="btn-reset" onclick="doReset()">↺ Reset</button>
     </div>
     <div class="app-footer">Optics &amp; Allied Engg. Pvt. Ltd. (OPTICA) &nbsp;|&nbsp; +91-9886654729 &nbsp;|&nbsp; www.opticsindia.com</div>
@@ -957,23 +951,27 @@ function calcCirc(){
   const sd1=s1==="convex"?g1:(s1==="concave"?-g1:0),sd2=s2==="convex"?g2:(s2==="concave"?-g2:0);
   const _lp={id:"c-canvas",p:{OD,CT:CTv,CA1,CA2,s1,s2,g1:Math.abs(g1),g2:Math.abs(g2)}};window._lastLensParams=_lp;drawLensCanvas("c-canvas",_lp.p,true);
   document.getElementById("result-text").innerHTML=`
-${resTitle("🔵 CIRCULAR LENS RESULTS")}
-<div class="res-section">${secHdr("Material & Price")}
+${resTitle("📐 Optic Cost Summary — Circular Lens")}
+<div class="res-section">${secHdr("Material")}
 ${row("Material",mat)}
 </div><div class="res-divider"></div>
-<div class="res-section">${secHdr("Lens Parameters")}
+<div class="res-section">${secHdr("Dimensions")}
 ${row("Outer Diameter (OD)",OD.toFixed(3)+" mm")}
-${row("S1 Surface",v("s1t"))}
-${s1!=="plano"?row("S1 ROC (R1)",parseFloat(v("s1ri")).toFixed(3)+" mm"):""}
-${row("S1 Clear Aperture (CA1)",CA1.toFixed(3)+" mm")}
-${row("S1 Sag",(sd1>=0?"+":"")+sd1.toFixed(4)+" mm")}
-${row("S2 Surface",v("s2t"))}
-${s2!=="plano"?row("S2 ROC (R2)",parseFloat(v("s2ri")).toFixed(3)+" mm"):""}
-${row("S2 Clear Aperture (CA2)",CA2.toFixed(3)+" mm")}
-${row("S2 Sag",(sd2>=0?"+":"")+sd2.toFixed(4)+" mm")}
 ${row("Center Thickness (CT)",CTv.toFixed(4)+" mm")}
 ${row("Edge Thickness (ET)",ET.toFixed(4)+" mm")}
 ${row("Blank Total Thickness",tt.toFixed(4)+" mm")}
+</div><div class="res-divider"></div>
+<div class="res-section">${secHdr("Surface A (S1)")}
+${row("Type",v("s1t"))}
+${s1!=="plano"?row("ROC (R1)",parseFloat(v("s1ri")).toFixed(3)+" mm"):""}
+${row("Clear Aperture (CA1)",CA1.toFixed(3)+" mm")}
+${row("Sag",(sd1>=0?"+":"")+sd1.toFixed(4)+" mm")}
+</div><div class="res-divider"></div>
+<div class="res-section">${secHdr("Surface B (S2)")}
+${row("Type",v("s2t"))}
+${s2!=="plano"?row("ROC (R2)",parseFloat(v("s2ri")).toFixed(3)+" mm"):""}
+${row("Clear Aperture (CA2)",CA2.toFixed(3)+" mm")}
+${row("Sag",(sd2>=0?"+":"")+sd2.toFixed(4)+" mm")}
 </div><div class="res-divider"></div>
 <div class="res-section">${secHdr("Finished Lens")}
 ${row("Weight",wt.toFixed(4)+" g")}
@@ -995,7 +993,7 @@ function calcRect(){
   const Vtc=L*W*H/1000,wt=Vtc*dens,cost=wt*ppg;
   drawRectCanvas("r-canvas",{L,W,H});
   document.getElementById("result-text").innerHTML=`
-${resTitle("🟦 RECTANGULAR BLOCK RESULTS")}
+${resTitle("📐 Optic Cost Summary — Rectangular Block")}
 <div class="res-section">${secHdr("Material & Price")}
 ${row("Material",mat)}
 </div><div class="res-divider"></div>
@@ -1037,14 +1035,28 @@ function _showCSVViewer(csvText,fname){
   bar.appendChild(btnCopy);bar.appendChild(btnDone);ov.appendChild(bar);document.body.appendChild(ov);setTimeout(()=>{ta.select();},200);
 }
 function _showImageViewer(dataUri,fname){
-  _rmOv('_oc-img');const ov=_mkOv('_oc-img','#000');ov.style.overflowY='auto';
+  _rmOv('_oc-img');const ov=_mkOv('_oc-img','#111');ov.style.overflowY='hidden';ov.style.display='flex';ov.style.flexDirection='column';
   ov.appendChild(_mkHdr('📷 '+fname,()=>ov.remove()));
-  const tip=_mkEl('div','padding:10px 14px;background:#071a0e;flex-shrink:0;text-align:center;font-size:.73rem;color:#4ade80;line-height:1.8;');
-  tip.innerHTML='✅ <b>Saved to Files tab</b><br><span style="color:#fbbf24;font-size:.72rem;">📌 <b>Long-press the image below → "Save image"</b> → Gallery</span>';
+  const tip=_mkEl('div','padding:8px 14px;background:#071a0e;flex-shrink:0;text-align:center;font-size:.73rem;color:#4ade80;line-height:1.8;');
+  tip.innerHTML='✅ <b>Saved to Files tab</b><br><span style="color:#fbbf24;font-size:.72rem;">📌 Long-press image → Save | Pinch or buttons to zoom</span>';
   ov.appendChild(tip);
-  const img=document.createElement('img');img.src=dataUri;img.style.cssText='width:100%;display:block;';img.oncontextmenu=e=>e.stopPropagation();ov.appendChild(img);
-  const foot=_mkEl('div','padding:9px 14px;background:#0c1d30;flex-shrink:0;text-align:center;font-size:.71rem;color:#7db0cc;');
-  foot.textContent='Tap 🗂 Files tab to view this image again anytime';ov.appendChild(foot);document.body.appendChild(ov);
+  const zbar=_mkEl('div','display:flex;align-items:center;justify-content:center;gap:12px;padding:6px;background:#0c1d30;flex-shrink:0;');
+  let scale=1,tx=0,ty=0,lastD=0,lastTx=0,lastTy=0,dragging=false,dragX=0,dragY=0;
+  const wrap=_mkEl('div','flex:1;overflow:hidden;display:flex;align-items:center;justify-content:center;touch-action:none;cursor:grab;background:#111;');
+  const img=document.createElement('img');img.src=dataUri;img.style.cssText='max-width:100%;display:block;transform-origin:center center;user-select:none;pointer-events:none;';
+  img.oncontextmenu=e=>e.stopPropagation();wrap.appendChild(img);
+  function applyT(){img.style.transform='scale('+scale+') translate('+tx+'px,'+ty+'px)';}
+  [['➕',()=>{scale=Math.min(scale*1.4,8);applyT();}],['1:1',()=>{scale=1;tx=0;ty=0;applyT();}],['➖',()=>{scale=Math.max(scale/1.4,0.5);applyT();}]].forEach(([lbl,fn])=>{
+    const b=_mkEl('button','padding:4px 16px;border-radius:6px;background:#1a3a5c;color:#e2e8f0;border:none;font-size:1rem;cursor:pointer;');
+    b.textContent=lbl;b.onclick=fn;zbar.appendChild(b);
+  });
+  wrap.addEventListener('touchstart',e=>{if(e.touches.length===2)lastD=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);else if(e.touches.length===1){dragging=true;dragX=e.touches[0].clientX;dragY=e.touches[0].clientY;lastTx=tx;lastTy=ty;}},{passive:true});
+  wrap.addEventListener('touchmove',e=>{e.preventDefault();if(e.touches.length===2){const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);if(lastD)scale=Math.min(Math.max(scale*(d/lastD),0.5),8);lastD=d;applyT();}else if(e.touches.length===1&&dragging){tx=lastTx+(e.touches[0].clientX-dragX)/scale;ty=lastTy+(e.touches[0].clientY-dragY)/scale;applyT();}},{passive:false});
+  wrap.addEventListener('touchend',()=>{dragging=false;lastD=0;});
+  wrap.addEventListener('wheel',e=>{e.preventDefault();scale=Math.min(Math.max(scale*(e.deltaY<0?1.2:0.85),0.5),8);applyT();},{passive:false});
+  ov.appendChild(zbar);ov.appendChild(wrap);
+  const foot=_mkEl('div','padding:7px 14px;background:#0c1d30;flex-shrink:0;text-align:center;font-size:.71rem;color:#7db0cc;');
+  foot.textContent='Tap Files tab to view this image again anytime';ov.appendChild(foot);document.body.appendChild(ov);
 }
 function _showDocViewer(dataUri,fname){
   _rmOv('_oc-doc');const ov=_mkOv('_oc-doc','#fff');
@@ -1076,13 +1088,96 @@ function viewStoredFile(fname){_getStoredFile(fname,(err,rec)=>{if(err||!rec){sh
 function deleteStoredFile(fname){showConfirm('Delete',"Remove '"+fname+"' from saved files?",()=>{_deleteFile(fname,()=>renderFilesLib());});}
 
 // SAVE
-function doSave(){
+function doSave(){doSaveXLSX();}
+function doSaveXLSX(){
   if(!recs.length){showModal('No Data','Calculate items first.');return;}
-  const allHdrs=[...new Set(recs.flatMap(r=>Object.keys(r)))],esc=v=>`"${String(v==null?'':v).replace(/"/g,'""')}"`;
-  const csvText='\uFEFF'+[allHdrs.map(esc).join(','),...recs.map(r=>allHdrs.map(h=>esc(r[h]==null?'':r[h])).join(','))].join('\r\n');
-  const ts=new Date().toISOString().slice(0,19).replace(/[T:]/g,'-'),fname='OptiCost_'+ts+'.csv';
-  const blob=new Blob([csvText],{type:'text/csv;charset=utf-8;'});
-  _storeFile(fname,blob,(dataUri,err)=>{if(err)console.warn('IDB store err:',err);_showCSVViewer(csvText,fname);});
+  try{_buildAndSaveXLSX();}catch(e){_buildAndSaveCSV();}
+}
+function _buildAndSaveXLSX(){
+  // Sort headers: put label-like keys first
+  const allHdrs=[...new Set(recs.flatMap(r=>Object.keys(r)))].sort((a,b)=>a.localeCompare(b));
+  // Build minimal XLSX using base64 encoded template approach - use CSV with .xlsx ext trick const escX=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  // Column widths based on header length
+  const colW=allHdrs.map(h=>({wch:Math.max(h.length+2,12)}));
+  let sheetXml='<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">';
+  // Col widths
+  sheetXml+='<cols>'+allHdrs.map((h,i)=>`<col min="${i+1}" max="${i+1}" width="${Math.max(h.length+2,14)}" customWidth="1"/>`).join('')+'</cols>';
+  sheetXml+='<sheetData>';
+  // Header row with bold style (s=1)
+  sheetXml+='<row r="1">';
+  allHdrs.forEach((h,ci)=>{const col=ci<26?String.fromCharCode(65+ci):'A'+String.fromCharCode(65+ci-26);sheetXml+=`<c r="${col}1" t="inlineStr" s="1"><is><t>${escX(h)}</t></is></c>`;});
+  sheetXml+='</row>';
+  recs.forEach((r,ri)=>{
+    sheetXml+='<row r="'+(ri+2)+'">';
+    allHdrs.forEach((h,ci)=>{
+      const col=ci<26?String.fromCharCode(65+ci):'A'+String.fromCharCode(65+ci-26);
+      const addr=col+(ri+2),cell=r[h]==null?'':r[h];
+      const num=cell!==''&&!isNaN(parseFloat(cell))&&isFinite(cell);
+      if(num)sheetXml+=`<c r="${addr}"><v>${escX(cell)}</v></c>`;
+      else sheetXml+=`<c r="${addr}" t="inlineStr"><is><t>${escX(cell)}</t></is></c>`;
+    });
+    sheetXml+='</row>';
+  });
+  sheetXml+='</sheetData></worksheet>';
+  const wbXml='<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="OptiCost" sheetId="1" r:id="rId1"/></sheets></workbook>';
+  const relsXml='<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>';
+  const wbRels='<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>';
+  const ct='<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>';
+  // Use JSZip if available, else fallback to CSV
+  if(typeof JSZip==='undefined'){
+    const s=document.createElement('script');
+    s.src='https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+    s.onload=()=>_zipAndSaveXLSX(ct,wbXml,wbRels,relsXml,sheetXml);
+    s.onerror=()=>_buildAndSaveCSV();
+    document.head.appendChild(s);
+  } else _zipAndSaveXLSX(ct,wbXml,wbRels,relsXml,sheetXml);
+}
+function _zipAndSaveXLSX(ct,wbXml,wbRels,relsXml,sheetXml){
+  try{
+    const zip=new JSZip();
+    zip.file('[Content_Types].xml',ct);
+    zip.folder('_rels').file('.rels',wbRels);
+    const xl=zip.folder('xl');
+    xl.file('workbook.xml',wbXml);
+    xl.folder('_rels').file('workbook.xml.rels',relsXml);
+    xl.folder('worksheets').file('sheet1.xml',sheetXml);
+    zip.generateAsync({type:'blob',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}).then(blob=>{
+      const ts=new Date().toISOString().slice(0,10);
+      _storeFile('OptiCost_'+ts+'.xlsx',blob,(dataUri,err)=>{
+        if(dataUri){const a=document.createElement('a');a.href=dataUri;a.download='OptiCost_'+ts+'.xlsx';a.click();}
+        showModal('✅ Excel Saved','OptiCost_'+ts+'.xlsx downloaded and saved to Files tab.');
+      });
+    });
+  }catch(e){_buildAndSaveCSV();}
+}
+function _buildAndSaveCSV(){
+  const allHdrs=[...new Set(recs.flatMap(r=>Object.keys(r)))];
+  const esc=v=>`"${String(v==null?'':v).replace(/"/g,'""')}"`;
+  const csv='﻿'+[allHdrs.map(esc).join(','),...recs.map(r=>allHdrs.map(h=>esc(r[h]==null?'':r[h])).join(','))].join('\r\n');
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
+  const ts=new Date().toISOString().slice(0,10);
+  _storeFile('OptiCost_'+ts+'.csv',blob,(dataUri,err)=>{
+    showModal('✅ CSV Saved','Saved as CSV (Excel offline fallback). Open in Files tab to share.');
+  });
+}
+function _buildAndSaveXLSX(){
+  // Sort headers: put label-like keys first
+  const allHdrs=[...new Set(recs.flatMap(r=>Object.keys(r)))].sort((a,b)=>a.localeCompare(b));
+  const ws_data=[allHdrs,...recs.map(r=>allHdrs.map(h=>r[h]==null?'':r[h]))];
+  const ws=XLSX.utils.aoa_to_sheet(ws_data);
+  // Auto column widths
+  const colW=allHdrs.map(h=>({wch:Math.max(h.length,14)}));
+  ws['!cols']=colW;
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,'OptiCost Data',ws);
+  const ts=new Date().toISOString().slice(0,10);
+  const fname='OptiCost_'+ts+'.xlsx';
+  const wbout=XLSX.write(wb,{bookType:'xlsx',type:'array'});
+  const blob=new Blob([wbout],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+  _storeFile(fname,blob,(dataUri,err)=>{
+    if(err)console.warn('IDB err:',err);
+    showModal('✅ Excel Saved',fname+' saved to Files tab. You can share it from there.');
+  });
 }
 
 function saveReportImage(fmt){
@@ -1094,6 +1189,173 @@ function saveReportImage(fmt){
   },80);
 }
 
+function saveReportWord(){
+  if(!recs.length){showModal('No Data','Calculate items first.');return;}
+  refreshSnapHeader();
+  const _dvx=document.getElementById('rpt-date').value.trim(),dateVal=_dvx?_dvx.split('-').reverse().join('/'):new Date().toLocaleDateString('en-GB');
+  const mfr=document.getElementById('rpt-mfr').value.trim()||'Optics & Allied Engg. Pvt. Ltd. (OPTICA)',
+        vendor=document.getElementById('rpt-vendor').value.trim()||'—',
+        titleTxt=document.getElementById('rpt-title').value.trim()||'Lens Raw Material Cost Estimation',
+        partno=document.getElementById('rpt-partno').value.trim()||'—';
+  const rtEl=document.getElementById('result-text');
+  const rows=rtEl?[...rtEl.querySelectorAll('.res-row')]:[];
+  let trows='';
+  rows.forEach(r=>{
+    const lbl=r.querySelector('input');const val=r.querySelectorAll('input')[1];
+    if(lbl&&val){
+      const isG=r.querySelector('.res-val-inp.green'),isA=r.querySelector('.res-val-inp.amber');
+      const bg=isG?'#E2EFDA':isA?'#FFF2CC':'#FFFFFF';
+      const fc=isG?'#16A34A':isA?'#92400E':'#000000';
+      trows+=`<w:tr><w:tc><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="${bg.replace('#','')}"/></w:tcPr><w:p><w:r><w:t>${lbl.value}</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="${bg.replace('#','')}"/></w:tcPr><w:p><w:pPr><w:jc w:val="right"/></w:pPr><w:r><w:rPr><w:b/><w:color w:val="${fc.replace('#','')}"/></w:rPr><w:t>${val.value}</w:t></w:r></w:p></w:tc></w:tr>`;
+    }
+  });
+  const docxml=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas" xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>${mfr}</w:t></w:r></w:p><w:p><w:r><w:rPr><w:color w:val="555555"/></w:rPr><w:t>www.opticsindia.com | +91-9886654729</w:t></w:r></w:p><w:p><w:r><w:t>To/Vendor: ${vendor}   Title: ${titleTxt}   Part No: ${partno}   Date: ${dateVal}</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w="9000" w:type="dxa"/><w:tblBorders><w:top w:val="single" w:sz="4"/><w:left w:val="single" w:sz="4"/><w:bottom w:val="single" w:sz="4"/><w:right w:val="single" w:sz="4"/><w:insideH w:val="single" w:sz="4"/><w:insideV w:val="single" w:sz="4"/></w:tblBorders></w:tblPr><w:tr><w:tc><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="1A2E44"/></w:tcPr><w:p><w:r><w:rPr><w:b/><w:color w:val="FFFFFF"/></w:rPr><w:t>Parameter</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="1A2E44"/></w:tcPr><w:p><w:r><w:rPr><w:b/><w:color w:val="FFFFFF"/></w:rPr><w:t>Value</w:t></w:r></w:p></w:tc></w:tr>${trows}</w:tbl><w:p><w:r><w:rPr><w:color w:val="888888"/><w:sz w:val="16"/></w:rPr><w:t>Generated by OptiCost LRMCE v2.0 | www.opticsindia.com</w:t></w:r></w:p><w:sectPr/></w:body></w:document>`;
+  const relsXml='<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>';
+  const ct='<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>';
+  const _makeDocx=()=>{
+    const zip=new JSZip();
+    zip.file('[Content_Types].xml',ct);
+    zip.folder('_rels').file('.rels',relsXml);
+    zip.folder('word').file('document.xml',docxml);
+    zip.generateAsync({type:'blob',mimeType:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'}).then(blob=>{
+      const ts=new Date().toISOString().slice(0,10);
+      const fname='OptiCost_'+ts+'.docx';
+      _storeFile(fname,blob,(dataUri,err)=>{
+        if(dataUri){const a=document.createElement('a');a.href=dataUri;a.download=fname;a.click();}
+        showModal('✅ Word Saved',fname+' downloaded. Open in Microsoft Word or Google Docs.');
+      });
+    });
+  };
+  if(typeof JSZip==='undefined'){
+    const s=document.createElement('script');
+    s.src='https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+    s.onload=_makeDocx;s.onerror=()=>showModal('Error','Network required to generate Word file.');
+    document.head.appendChild(s);
+  } else _makeDocx();
+}
+
+function _buildAndSaveXLSX(){
+  // Sort headers: put label-like keys first
+  const allHdrs=[...new Set(recs.flatMap(r=>Object.keys(r)))].sort((a,b)=>a.localeCompare(b));
+  // Build minimal XLSX using base64 encoded template approach - use CSV with .xlsx ext trick via BOM
+  // Actually build real XLSX using SpreadsheetML (XML-based xlsx)
+  const xmlRows=[allHdrs,...recs.map(r=>allHdrs.map(h=>r[h]==null?'':r[h]))];
+  const escX=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  let sheetXml='<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>';
+  xmlRows.forEach((row,ri)=>{
+    sheetXml+='<row r="'+(ri+1)+'">';
+    row.forEach((cell,ci)=>{
+      const col=String.fromCharCode(65+ci);const addr=col+(ri+1);
+      const num=!isNaN(cell)&&cell!==''&&cell!=null;
+      if(num)sheetXml+=`<c r="${addr}"><v>${escX(cell)}</v></c>`;
+      else sheetXml+=`<c r="${addr}" t="inlineStr"><is><t>${escX(cell)}</t></is></c>`;
+    });
+    sheetXml+='</row>';
+  });
+  sheetXml+='</sheetData></worksheet>';
+  const wbXml='<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="OptiCost" sheetId="1" r:id="rId1"/></sheets></workbook>';
+  const relsXml='<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>';
+  const wbRels='<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>';
+  const ct='<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>';
+  // Use JSZip if available, else fallback to CSV
+  if(typeof JSZip==='undefined'){
+    const s=document.createElement('script');
+    s.src='https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+    s.onload=()=>_zipAndSaveXLSX(ct,wbXml,wbRels,relsXml,sheetXml);
+    s.onerror=()=>_buildAndSaveCSV();
+    document.head.appendChild(s);
+  } else _zipAndSaveXLSX(ct,wbXml,wbRels,relsXml,sheetXml);
+}
+function _zipAndSaveXLSX(ct,wbXml,wbRels,relsXml,sheetXml){
+  try{
+    const zip=new JSZip();
+    zip.file('[Content_Types].xml',ct);
+    zip.folder('_rels').file('.rels',wbRels);
+    const xl=zip.folder('xl');
+    xl.file('workbook.xml',wbXml);
+    xl.folder('_rels').file('workbook.xml.rels',relsXml);
+    xl.folder('worksheets').file('sheet1.xml',sheetXml);
+    zip.generateAsync({type:'blob',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}).then(blob=>{
+      const ts=new Date().toISOString().slice(0,10);
+      _storeFile('OptiCost_'+ts+'.xlsx',blob,(dataUri,err)=>{
+        if(dataUri){const a=document.createElement('a');a.href=dataUri;a.download='OptiCost_'+ts+'.xlsx';a.click();}
+        showModal('✅ Excel Saved','OptiCost_'+ts+'.xlsx downloaded and saved to Files tab.');
+      });
+    });
+  }catch(e){_buildAndSaveCSV();}
+}
+function _buildAndSaveCSV(){
+  const allHdrs=[...new Set(recs.flatMap(r=>Object.keys(r)))];
+  const esc=v=>`"${String(v==null?'':v).replace(/"/g,'""')}"`;
+  const csv='﻿'+[allHdrs.map(esc).join(','),...recs.map(r=>allHdrs.map(h=>esc(r[h]==null?'':r[h])).join(','))].join('\r\n');
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
+  const ts=new Date().toISOString().slice(0,10);
+  _storeFile('OptiCost_'+ts+'.csv',blob,(dataUri,err)=>{
+    showModal('✅ CSV Saved','Saved as CSV (Excel offline fallback). Open in Files tab to share.');
+  });
+}
+function _buildAndSaveXLSX(){
+  // Sort headers: put label-like keys first
+  const allHdrs=[...new Set(recs.flatMap(r=>Object.keys(r)))].sort((a,b)=>a.localeCompare(b));
+  const ws_data=[allHdrs,...recs.map(r=>allHdrs.map(h=>r[h]==null?'':r[h]))];
+  const ws=XLSX.utils.aoa_to_sheet(ws_data);
+  // Auto column widths
+  const colW=allHdrs.map(h=>({wch:Math.max(h.length,14)}));
+  ws['!cols']=colW;
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,'OptiCost Data',ws);
+  const ts=new Date().toISOString().slice(0,10);
+  const fname='OptiCost_'+ts+'.xlsx';
+  const wbout=XLSX.write(wb,{bookType:'xlsx',type:'array'});
+  const blob=new Blob([wbout],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+  _storeFile(fname,blob,(dataUri,err)=>{
+    if(err)console.warn('IDB err:',err);
+    showModal('✅ Excel Saved',fname+' saved to Files tab. You can share it from there.');
+  });
+}
+
+function saveReportImage(fmt){
+  if(fmt==='doc'){_saveReportHTML();return;}
+  if(!recs.length){showModal('No Data','Run a calculation first.');return;}
+  showModal('Building…','Generating PNG report…');
+  setTimeout(()=>{
+    try{_buildReportCanvas(cv=>{cv.toBlob(blob=>{_closeModal();try{cv.width=1;cv.height=1;}catch{}if(!blob){showModal('Error','Could not generate image.');return;}const ts=new Date().toISOString().slice(0,19).replace(/[T:]/g,'-');const fname='OptiCost_Report_'+ts+'.png';_storeFile(fname,blob,(dataUri,err)=>{if(err)console.warn('IDB store err:',err);if(dataUri)_showImageViewer(dataUri,fname);else showModal('Error','Could not save image.');});},'image/png');});}catch(e){_closeModal();showModal('Error','Image build failed: '+e.message);}
+  },80);
+}
+
+function saveReportWord(){
+  if(!recs.length){showModal('No Data','Calculate items first.');return;}
+  refreshSnapHeader();
+  const _dvx=document.getElementById('rpt-date').value.trim(),dateVal=_dvx?_dvx.split('-').reverse().join('/'):new Date().toLocaleDateString('en-GB');
+  const mfr=document.getElementById('rpt-mfr').value.trim()||'Optics & Allied Engg. Pvt. Ltd. (OPTICA)',
+        vendor=document.getElementById('rpt-vendor').value.trim()||'—',
+        titleTxt=document.getElementById('rpt-title').value.trim()||'Lens Raw Material Cost Estimation',
+        partno=document.getElementById('rpt-partno').value.trim()||'—';
+  const rtEl=document.getElementById('result-text');
+  const rows=rtEl?[...rtEl.querySelectorAll('.res-row')]:[]; 
+  let tbl='<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%;font-family:Calibri,Arial;font-size:11pt">';
+  tbl+='<tr style="background:#1a2e44;color:white"><th>Parameter</th><th>Value</th></tr>';
+  rows.forEach(r=>{
+    const lbl=r.querySelector('input:first-child');
+    const val=r.querySelector('input:last-child');
+    if(lbl&&val){
+      const isGreen=r.classList.contains('res-row-green'),isAmber=r.classList.contains('res-row-amber');
+      const bg=isGreen?'#e6ffe6':isAmber?'#fff8e1':'#ffffff';
+      const fc=isGreen?'#16a34a':isAmber?'#92400e':'#111827';
+      tbl+=`<tr style="background:${bg}"><td>${lbl.value}</td><td style="text-align:right;color:${fc};font-weight:${isGreen||isAmber?'bold':'normal'}">${val.value}</td></tr>`;
+    }
+  });
+  tbl+='</table>';
+  const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word"><head><meta charset="utf-8"><title>${mfr}</title></head><body style="font-family:Calibri,Arial;margin:2cm"><h2 style="color:#1a2e44">${mfr}</h2><p style="color:#555">www.opticsindia.com | +91-9886654729</p><hr><table width="100%"><tr><td><b>To/Vendor:</b> ${vendor}</td><td><b>Title:</b> ${titleTxt}</td><td><b>Part No:</b> ${partno}</td><td><b>Date:</b> ${dateVal}</td></tr></table><br>${tbl}<br><p style="color:#888;font-size:9pt">Generated by OptiCost LRMCE v2.0 | www.opticsindia.com</p></body></html>`;
+  const blob=new Blob(['\ufeff'+html],{type:'application/vnd.ms-word;charset=utf-8'});
+  const ts=new Date().toISOString().slice(0,10);
+  const fname='OptiCost_'+ts+'.doc';
+  _storeFile(fname,blob,(dataUri,err)=>{
+    if(err)console.warn('IDB err:',err);
+    if(dataUri){const a=document.createElement('a');a.href=dataUri;a.download=fname;a.click();}
+    showModal('✅ Word Saved',fname+' downloaded. Open in Microsoft Word.');
+  });
+}
 function _saveReportHTML(){
   if(!recs.length){showModal('No Data','Run a calculation first.');return;}
   refreshSnapHeader();
@@ -1296,7 +1558,7 @@ function doReset(){
 // LENS CANVAS DRAWING
 function drawLensCanvas(id,p,preview=false){
   const canvas=document.getElementById(id);
-  const CW=canvas.offsetWidth||320,CH=Math.max(CW*1.25,380);
+  const CW=canvas.offsetWidth||320,CH=Math.max(CW,300);
   canvas.width=CW;canvas.height=CH;
   const ctx=canvas.getContext("2d");ctx.clearRect(0,0,CW,CH);
   const{OD,CT,CA1,CA2,s1,s2,g1,g2}=p;
@@ -1308,7 +1570,7 @@ function drawLensCanvas(id,p,preview=false){
   function xS2(y){const sg=getSag(roc2,hCA2,g2,Math.abs(y));if(s2==="convex")return+CT/2+g2-sg;if(s2==="concave")return+CT/2+sg;return+CT/2;}
   const xs1v=xS1(0),xs1e=xS1(hCA1),xs2v=xS2(0),xs2e=xS2(hCA2);
   const xMin=Math.min(xs1v,xs1e,xs2v,xs2e)-0.5,xMax=Math.max(xs1v,xs1e,xs2v,xs2e)+0.5;
-  const padX=60,padXR=88,padY=40;
+  const padX=44,padXR=64,padY=36;
   const s=Math.min((CW-padX-padXR)/(xMax-xMin),(CH-padY*2)/OD);
   if(s<=0)return;
   // Center the lens drawing horizontally accounting for asymmetric padding
@@ -1320,7 +1582,7 @@ function drawLensCanvas(id,p,preview=false){
   const LP=ys.map(y=>[px(xS1(y)),py(y)]),RP=ys.map(y=>[px(xS2(y)),py(y)]);
   const cs=getComputedStyle(document.documentElement);
   const lf1=preview?'rgba(30,58,138,0.85)':'rgba(40,44,52,0.88)',lf2=preview?'rgba(99,102,241,0.70)':'rgba(160,168,180,0.78)';
-  const cA=preview?'#1e3a8a':'#1a1a1a',cA2=preview?'#7c3aed':'#6366f1',cAmb=preview?'#b45309':'#1a1a1a',cRed=preview?'#dc2626':'#e11d48';
+  const cA=preview?'#b45309':'#1a1a1a',cA2=preview?'#b45309':'#6366f1',cAmb=preview?'#b45309':'#1a1a1a',cRed=preview?'#dc2626':'#e11d48';
   ctx.beginPath();LP.forEach((pt,i)=>i?ctx.lineTo(...pt):ctx.moveTo(...pt));[...RP].reverse().forEach(pt=>ctx.lineTo(...pt));ctx.closePath();
   const grd=ctx.createLinearGradient(px(xs1v),0,px(xs2v),0);grd.addColorStop(0,lf1);grd.addColorStop(0.5,lf2);grd.addColorStop(1,lf1);ctx.fillStyle=grd;ctx.fill();
   ctx.save();ctx.beginPath();LP.forEach((pt,i)=>i?ctx.lineTo(...pt):ctx.moveTo(...pt));[...RP].reverse().forEach(pt=>ctx.lineTo(...pt));ctx.closePath();ctx.clip();
@@ -1396,7 +1658,7 @@ function drawLensCanvas(id,p,preview=false){
     ctx.beginPath();ctx.moveTo(caArrowX,ca1T);ctx.lineTo(caArrowX,ca1B);ctx.stroke();
     ctx.beginPath();ctx.moveTo(caArrowX-3,ca1T+6);ctx.lineTo(caArrowX,ca1T);ctx.lineTo(caArrowX+3,ca1T+6);ctx.stroke();
     ctx.beginPath();ctx.moveTo(caArrowX-3,ca1B-6);ctx.lineTo(caArrowX,ca1B);ctx.lineTo(caArrowX+3,ca1B-6);ctx.stroke();
-    ctx.save();ctx.font="bold 9px 'Nunito',sans-serif";ctx.fillStyle=cA2;
+    ctx.save();ctx.font="bold 11px 'Nunito',sans-serif";ctx.fillStyle=cA2;
     ctx.translate(caArrowX+10,(ca1T+ca1B)/2);ctx.rotate(Math.PI/2);
     ctx.textAlign="center";ctx.fillText("⌀CA1="+CA1.toFixed(2)+"mm",0,0);ctx.restore();
   }
@@ -1406,7 +1668,7 @@ function drawLensCanvas(id,p,preview=false){
     ctx.beginPath();ctx.moveTo(ca2ArrowX,ca2T);ctx.lineTo(ca2ArrowX,ca2B);ctx.stroke();
     ctx.beginPath();ctx.moveTo(ca2ArrowX-3,ca2T+6);ctx.lineTo(ca2ArrowX,ca2T);ctx.lineTo(ca2ArrowX+3,ca2T+6);ctx.stroke();
     ctx.beginPath();ctx.moveTo(ca2ArrowX-3,ca2B-6);ctx.lineTo(ca2ArrowX,ca2B);ctx.lineTo(ca2ArrowX+3,ca2B-6);ctx.stroke();
-    ctx.save();ctx.font="bold 9px 'Nunito',sans-serif";ctx.fillStyle=cAmb;
+    ctx.save();ctx.font="bold 11px 'Nunito',sans-serif";ctx.fillStyle=cAmb;
     ctx.translate(ca2ArrowX+10,(ca2T+ca2B)/2);ctx.rotate(Math.PI/2);
     ctx.textAlign="center";ctx.fillText("⌀CA2="+CA2.toFixed(2)+"mm",0,0);ctx.restore();
   }
