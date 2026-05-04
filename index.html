@@ -850,15 +850,31 @@ function resetMaterials(){showConfirm("Reset Library","Restore factory defaults?
 
 // CALC ENGINE
 function calcSag(stype,roc,ca){
+  // Returns UNSIGNED sag (always positive). Plano=0.
   const st=stype.toLowerCase();if(st==="plano")return 0;
   const R=parseFloat(roc),h=parseFloat(ca)/2;
   if(isNaN(R)||R<=0)throw new Error("ROC must be a positive number.");
   if(isNaN(h)||h<=0)throw new Error("CA must be > 0.");
-  if(R<h)throw new Error("ROC "+R.toFixed(3)+" < CA/2 "+h.toFixed(3)+" — invalid geometry.");
+  if(R<h)throw new Error("ROC "+R.toFixed(3)+"mm < half-aperture "+h.toFixed(3)+"mm — invalid geometry.");
   return R-Math.sqrt(R*R-h*h);
 }
-function edgeThick(s1,s2,ct,g1,g2){let ET=ct;if(s1==="convex")ET-=g1;else if(s1==="concave")ET+=g1;if(s2==="convex")ET-=g2;else if(s2==="concave")ET+=g2;return ET;}
-function totalThick(ct,s1,s2,g1,g2){let t=ct;if(s1==="concave")t+=Math.abs(g1);if(s2==="concave")t+=Math.abs(g2);if(["plano","convex"].includes(s1)&&["plano","convex"].includes(s2))return ct;return t;}
+function edgeThick(s1,s2,ct,g1,g2){let ET=ct;if(s1==="convex")ET-=g1;else if(s1==="concave")ET+=g1;if(s2==="convex")ET-=g2;else if(s2==="concave")ET+=g2;return Math.max(0,ET);}
+function edgeThickOD(s1,s2,ct,e1,e2){
+  // e1,e2 = unsigned sag at OD/2. Match Python edge_thickness logic.
+  let ET=ct;
+  if(s1==="convex")ET-=e1; else if(s1==="concave")ET+=e1;
+  if(s2==="convex")ET-=e2; else if(s2==="concave")ET+=e2;
+  return ET;
+}
+function totalThick(ct,s1,s2,g1,g2,e1,e2){
+  // Match Python total_thickness_gui: concave adds sag, convex/plano do not
+  e1=e1!==undefined?e1:g1; e2=e2!==undefined?e2:g2;
+  let t=ct;
+  if(s1==="concave")t+=Math.abs(e1);
+  if(s2==="concave")t+=Math.abs(e2);
+  if((s1==="plano"||s1==="convex")&&(s2==="plano"||s2==="convex"))return ct;
+  return t;
+}
 function capVol(dia,sag){sag=Math.abs(sag);if(!sag)return 0;const r=dia/2;return(Math.PI*sag/6)*(3*r*r+sag*sag);}
 function lensVol(OD,CA1,CA2,g1,g2,s1,s2,CT){
   const r=OD/2,ET=edgeThick(s1,s2,CT,g1,g2),Vc=Math.PI*r*r*ET,tt=totalThick(CT,s1,s2,g1,g2),Vrb=Math.PI*r*r*tt;
@@ -945,7 +961,8 @@ function calcCirc(){
   if(OD<=0)throw new Error("Outer Diameter must be > 0.");if(isNaN(CTv)||CTv<=0)throw new Error("Center Thickness must be > 0 (check expression).");
   if(CA1<=0)throw new Error("CA1 must be > 0.");if(CA2<=0)throw new Error("CA2 must be > 0.");if(CA1>OD)throw new Error("CA1 cannot exceed OD.");if(CA2>OD)throw new Error("CA2 cannot exceed OD.");
   const s1=v("s1t").toLowerCase(),s2=v("s2t").toLowerCase(),g1=calcSag(s1,v("s1ri"),CA1),g2=calcSag(s2,v("s2ri"),CA2);
-  const tt=totalThick(CTv,s1,s2,g1,g2),ET=edgeThick(s1,s2,CTv,g1,g2);
+  const e1=calcSag(s1,v("s1ri"),OD),e2=calcSag(s2,v("s2ri"),OD);
+  const tt=totalThick(CTv,s1,s2,g1,g2,e1,e2),ET=edgeThickOD(s1,s2,CTv,e1,e2);
   const{Vrb,Vt}=lensVol(OD,CA1,CA2,g1,g2,s1,s2,CTv);
   const Vtc=Vt/1000,wt=Vtc*dens,cost=wt*ppg,Vrbc=Vrb/1000,rwt=Vrbc*dens,rcost=rwt*ppg;
   const sd1=s1==="convex"?g1:(s1==="concave"?-g1:0),sd2=s2==="convex"?g2:(s2==="concave"?-g2:0);
@@ -958,7 +975,7 @@ ${row("Material",mat)}
 <div class="res-section">${secHdr("Dimensions")}
 ${row("Outer Diameter (OD)",OD.toFixed(3)+" mm")}
 ${row("Center Thickness (CT)",CTv.toFixed(4)+" mm")}
-${row("Edge Thickness (ET)",ET.toFixed(4)+" mm")}
+${ET<0?row("Edge Thickness (ET) ⚠",ET.toFixed(4)+" mm","amber"):row("Edge Thickness (ET)",ET.toFixed(4)+" mm")}
 ${row("Blank Total Thickness",tt.toFixed(4)+" mm")}
 </div><div class="res-divider"></div>
 <div class="res-section">${secHdr("Surface A (S1)")}
@@ -1038,7 +1055,7 @@ function _showImageViewer(dataUri,fname){
   _rmOv('_oc-img');const ov=_mkOv('_oc-img','#111');ov.style.overflowY='hidden';ov.style.display='flex';ov.style.flexDirection='column';
   ov.appendChild(_mkHdr('📷 '+fname,()=>ov.remove()));
   const tip=_mkEl('div','padding:8px 14px;background:#071a0e;flex-shrink:0;text-align:center;font-size:.73rem;color:#4ade80;line-height:1.8;');
-  tip.innerHTML='✅ <b>Saved to Files tab</b><br><span style="color:#fbbf24;font-size:.72rem;">📌 Long-press image → Save | Pinch or buttons to zoom</span>';
+  tip.innerHTML='✅ Image ready<br><span style="color:#fbbf24;font-size:.72rem;">⬇ Use button below to save to device</span>';
   ov.appendChild(tip);
   const zbar=_mkEl('div','display:flex;align-items:center;justify-content:center;gap:12px;padding:6px;background:#0c1d30;flex-shrink:0;');
   let scale=1,tx=0,ty=0,lastD=0,lastTx=0,lastTy=0,dragging=false,dragX=0,dragY=0;
@@ -1046,9 +1063,9 @@ function _showImageViewer(dataUri,fname){
   const img=document.createElement('img');img.src=dataUri;img.style.cssText='max-width:100%;display:block;transform-origin:center center;user-select:none;pointer-events:none;';
   img.oncontextmenu=e=>e.stopPropagation();wrap.appendChild(img);
   function applyT(){img.style.transform='scale('+scale+') translate('+tx+'px,'+ty+'px)';}
-  [['➕',()=>{scale=Math.min(scale*1.4,8);applyT();}],['1:1',()=>{scale=1;tx=0;ty=0;applyT();}],['➖',()=>{scale=Math.max(scale/1.4,0.5);applyT();}]].forEach(([lbl,fn])=>{
+  [['⬇ Save',()=>{try{const a=document.createElement('a');a.href=dataUri;a.download=fname;document.body.appendChild(a);a.click();document.body.removeChild(a);}catch(e){window.open(dataUri,'_blank');}}],['➕',()=>{scale=Math.min(scale*1.4,8);applyT();}],['1:1',()=>{scale=1;tx=0;ty=0;applyT();}],['➖',()=>{scale=Math.max(scale/1.4,0.5);applyT();}]].forEach(([lbl,fn])=>{
     const b=_mkEl('button','padding:4px 16px;border-radius:6px;background:#1a3a5c;color:#e2e8f0;border:none;font-size:1rem;cursor:pointer;');
-    b.textContent=lbl;b.onclick=fn;zbar.appendChild(b);
+    b.style.background=lbl.includes('Save')?'#16a34a':'#1a3a5c';b.textContent=lbl;b.onclick=fn;zbar.appendChild(b);
   });
   wrap.addEventListener('touchstart',e=>{if(e.touches.length===2)lastD=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);else if(e.touches.length===1){dragging=true;dragX=e.touches[0].clientX;dragY=e.touches[0].clientY;lastTx=tx;lastTy=ty;}},{passive:true});
   wrap.addEventListener('touchmove',e=>{e.preventDefault();if(e.touches.length===2){const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);if(lastD)scale=Math.min(Math.max(scale*(d/lastD),0.5),8);lastD=d;applyT();}else if(e.touches.length===1&&dragging){tx=lastTx+(e.touches[0].clientX-dragX)/scale;ty=lastTy+(e.touches[0].clientY-dragY)/scale;applyT();}},{passive:false});
@@ -1157,7 +1174,8 @@ function _buildAndSaveCSV(){
   const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
   const ts=new Date().toISOString().slice(0,10);
   _storeFile('OptiCost_'+ts+'.csv',blob,(dataUri,err)=>{
-    showModal('✅ CSV Saved','Saved as CSV (Excel offline fallback). Open in Files tab to share.');
+    if(dataUri){const a=document.createElement('a');a.href=dataUri;a.download='OptiCost_'+ts+'.csv';document.body.appendChild(a);a.click();document.body.removeChild(a);}
+    showModal('✅ CSV Saved','Download triggered. Also saved in Files tab.');
   });
 }
 function _buildAndSaveXLSX(){
@@ -1291,7 +1309,8 @@ function _buildAndSaveCSV(){
   const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
   const ts=new Date().toISOString().slice(0,10);
   _storeFile('OptiCost_'+ts+'.csv',blob,(dataUri,err)=>{
-    showModal('✅ CSV Saved','Saved as CSV (Excel offline fallback). Open in Files tab to share.');
+    if(dataUri){const a=document.createElement('a');a.href=dataUri;a.download='OptiCost_'+ts+'.csv';document.body.appendChild(a);a.click();document.body.removeChild(a);}
+    showModal('✅ CSV Saved','Download triggered. Also saved in Files tab.');
   });
 }
 function _buildAndSaveXLSX(){
@@ -1558,29 +1577,59 @@ function doReset(){
 // LENS CANVAS DRAWING
 function drawLensCanvas(id,p,preview=false){
   const canvas=document.getElementById(id);
-  const CW=canvas.offsetWidth||320,CH=Math.max(CW,300);
-  canvas.width=CW;canvas.height=CH;
-  const ctx=canvas.getContext("2d");ctx.clearRect(0,0,CW,CH);
+  const CW=canvas.offsetWidth||320;
   const{OD,CT,CA1,CA2,s1,s2,g1,g2}=p;
-  if(OD<=0||CT<=0)return;
   const roc1=parseFloat(document.getElementById("s1ri").value)||0,roc2=parseFloat(document.getElementById("s2ri").value)||0;
+  function _errOverlay(msg){
+    const CH=Math.max(CW,200);canvas.width=CW;canvas.height=CH;
+    const ctx=canvas.getContext("2d");ctx.clearRect(0,0,CW,CH);
+    ctx.fillStyle=preview?"rgba(248,113,113,0.13)":"rgba(220,38,38,0.10)";ctx.fillRect(0,0,CW,CH);
+    ctx.strokeStyle=preview?"#f87171":"#dc2626";ctx.lineWidth=1.5;ctx.setLineDash([6,4]);ctx.strokeRect(4,4,CW-8,CH-8);ctx.setLineDash([]);
+    ctx.fillStyle=preview?"#f87171":"#dc2626";ctx.textAlign="center";
+    ctx.font="bold 13px 'Nunito',sans-serif";ctx.fillText("\u26a0 Impossible Geometry",CW/2,CH/2-14);
+    ctx.font="11px 'Nunito',sans-serif";ctx.fillText(msg,CW/2,CH/2+6);ctx.textAlign="left";
+  }
+  if(OD<=0||CT<=0)return;
+  // Geometry validation
+  if(s1!=="plano"&&roc1>0&&roc1<CA1/2){_errOverlay("S1: ROC ("+roc1.toFixed(2)+"mm) < half-CA1 ("+((CA1/2).toFixed(2))+"mm)");return;}
+  if(s2!=="plano"&&roc2>0&&roc2<CA2/2){_errOverlay("S2: ROC ("+roc2.toFixed(2)+"mm) < half-CA2 ("+((CA2/2).toFixed(2))+"mm)");return;}
+  if(s1!=="plano"&&roc1>0&&roc1<OD/2){_errOverlay("S1: ROC ("+roc1.toFixed(2)+"mm) < half-OD ("+((OD/2).toFixed(2))+"mm)");return;}
+  if(s2!=="plano"&&roc2>0&&roc2<OD/2){_errOverlay("S2: ROC ("+roc2.toFixed(2)+"mm) < half-OD ("+((OD/2).toFixed(2))+"mm)");return;}
+  const _sagOD=(roc,h)=>{if(!roc||roc<=0)return 0;const d=roc*roc-h*h;return d<0?roc:roc-Math.sqrt(d);};
+  const e1od=(s1==="convex"?_sagOD(roc1,OD/2):0),e2od=(s2==="convex"?_sagOD(roc2,OD/2):0);
+  const etOD=CT-e1od-e2od;
+  if(etOD<0){_errOverlay("ET="+etOD.toFixed(2)+"mm — sags ("+e1od.toFixed(2)+"+"+e2od.toFixed(2)+"mm) exceed CT ("+CT.toFixed(2)+"mm)");return;}
   const hOD=OD/2,hCA1=CA1/2,hCA2=CA2/2;
   function getSag(roc,hCA,gMax,absY){const aY=Math.min(absY,hCA);if(gMax<=0)return 0;if(roc>0&&roc>=aY)return roc-Math.sqrt(Math.max(0,roc*roc-aY*aY));return gMax*(aY/hCA)**2;}
   function xS1(y){const sg=getSag(roc1,hCA1,g1,Math.abs(y));if(s1==="convex")return-CT/2-g1+sg;if(s1==="concave")return-CT/2-sg;return-CT/2;}
   function xS2(y){const sg=getSag(roc2,hCA2,g2,Math.abs(y));if(s2==="convex")return+CT/2+g2-sg;if(s2==="concave")return+CT/2+sg;return+CT/2;}
   const xs1v=xS1(0),xs1e=xS1(hCA1),xs2v=xS2(0),xs2e=xS2(hCA2);
   const xMin=Math.min(xs1v,xs1e,xs2v,xs2e)-0.5,xMax=Math.max(xs1v,xs1e,xs2v,xs2e)+0.5;
-  const padX=44,padXR=64,padY=36;
-  const s=Math.min((CW-padX-padXR)/(xMax-xMin),(CH-padY*2)/OD);
+  const padX=44,padXR=64;
+  // Scale: use X-axis (thickness) as primary constraint, preserving true physical aspect ratio.
+  // Canvas height is derived from scale, clamped between 200px and 2×CW.
+  // Fixed canvas height keeps the canvas compact on mobile.
+  // Scale is driven by whichever is tighter: width or height.
+  // True physical proportions are preserved — tall thin lenses appear tall and thin,
+  // but capped so the canvas never scrolls off a mobile screen.
+  const physW=xMax-xMin, physH=OD;
+  const drawableW=CW-padX-padXR;
+  const sX=drawableW/Math.max(physW,0.1);
+  // Two-pass: estimate s with a padY guess, then compute true padY from lens height
+  const sEst=Math.min(sX,(360-30*2)/Math.max(physH,0.1));
+  const padY=Math.max(Math.round(physH*sEst*0.13),24);
+  const sY=(380-padY*2)/Math.max(physH,0.1);
+  const s=Math.min(sX,sY);
   if(s<=0)return;
-  // Center the lens drawing horizontally accounting for asymmetric padding
+  const CH=Math.max(Math.min(Math.round(physH*s+padY*2),380),200);
+  canvas.width=CW;canvas.height=CH;
+  const ctx=canvas.getContext("2d");ctx.clearRect(0,0,CW,CH);
   const drawW=(xMax-xMin)*s;
-  const ox=(CW-drawW)/2 - xMin*s + (padX-padXR)/2;
+  const ox=(CW-drawW)/2-xMin*s+(padX-padXR)/2;
   const cy=CH/2;
   const px=xmm=>ox+xmm*s,py=ymm=>cy-ymm*s;
   const N=200,ys=[];for(let i=0;i<=N;i++)ys.push(hOD-OD*i/N);
   const LP=ys.map(y=>[px(xS1(y)),py(y)]),RP=ys.map(y=>[px(xS2(y)),py(y)]);
-  const cs=getComputedStyle(document.documentElement);
   const lf1=preview?'rgba(30,58,138,0.85)':'rgba(40,44,52,0.88)',lf2=preview?'rgba(99,102,241,0.70)':'rgba(160,168,180,0.78)';
   const cA=preview?'#b45309':'#1a1a1a',cA2=preview?'#b45309':'#6366f1',cAmb=preview?'#b45309':'#1a1a1a',cRed=preview?'#dc2626':'#e11d48';
   ctx.beginPath();LP.forEach((pt,i)=>i?ctx.lineTo(...pt):ctx.moveTo(...pt));[...RP].reverse().forEach(pt=>ctx.lineTo(...pt));ctx.closePath();
@@ -1601,9 +1650,7 @@ function drawLensCanvas(id,p,preview=false){
   ctx.beginPath();ctx.moveTo(arrowX-4,topY+7);ctx.lineTo(arrowX,topY);ctx.lineTo(arrowX+4,topY+7);ctx.stroke();
   ctx.beginPath();ctx.moveTo(arrowX-4,botY-7);ctx.lineTo(arrowX,botY);ctx.lineTo(arrowX+4,botY-7);ctx.stroke();
   ctx.setLineDash([3,3]);ctx.beginPath();ctx.moveTo(arrowX+6,topY);ctx.lineTo(px(xs1e)+2,topY);ctx.stroke();ctx.beginPath();ctx.moveTo(arrowX+6,botY);ctx.lineTo(px(xs1e)+2,botY);ctx.stroke();ctx.setLineDash([]);
-  // OD arrow label (left side)
-  ctx.save();ctx.font="bold 13px 'Nunito',sans-serif";ctx.fillStyle=cAmb;ctx.translate(arrowX-13,(topY+botY)/2);ctx.rotate(-Math.PI/2);ctx.textAlign="center";ctx.fillText("⌀OD="+OD+" mm",0,0);ctx.restore();
-  // CT dimension arrow (below centre)
+  ctx.save();ctx.font="bold 13px 'Nunito',sans-serif";ctx.fillStyle=cAmb;ctx.translate(arrowX-13,(topY+botY)/2);ctx.rotate(-Math.PI/2);ctx.textAlign="center";ctx.fillText("\u2300OD="+OD+" mm",0,0);ctx.restore();
   const ctX1=px(xS1(0)),ctX2=px(xS2(0)),ctArrY=cy+20;
   ctx.strokeStyle=cA;ctx.lineWidth=1.3;ctx.setLineDash([]);ctx.lineCap="round";
   ctx.beginPath();ctx.moveTo(ctX1,cy-4);ctx.lineTo(ctX1,ctArrY+4);ctx.stroke();
@@ -1613,44 +1660,37 @@ function drawLensCanvas(id,p,preview=false){
   ctx.beginPath();ctx.moveTo(ctX1+ah,ctArrY-3);ctx.lineTo(ctX1,ctArrY);ctx.lineTo(ctX1+ah,ctArrY+3);ctx.stroke();
   ctx.beginPath();ctx.moveTo(ctX2-ah,ctArrY-3);ctx.lineTo(ctX2,ctArrY);ctx.lineTo(ctX2-ah,ctArrY+3);ctx.stroke();
   ctx.font="bold 12px 'Nunito',sans-serif";ctx.textAlign="center";ctx.fillStyle=cA;ctx.fillText("CT="+CT.toFixed(2)+"mm",(ctX1+ctX2)/2,ctArrY+12);ctx.textAlign="left";
-  // ET: horizontal arrow at TOP EDGE of lens, between S1(hOD) and S2(hOD) = actual edge thickness
-  const etVal=edgeThick(s1,s2,CT,g1,g2);
-  if(!isNaN(etVal)&&etVal>0.001){
-    const etYpos=py(hOD)-14; // just above top rim
+  function _sagAtOD(sagCA,caH,odH){if(sagCA<=0||caH<=0)return 0;const R=(caH*caH+sagCA*sagCA)/(2*sagCA);const disc=R*R-odH*odH;return disc<0?R:R-Math.sqrt(disc);}
+  const _e1=_sagAtOD(g1,CA1/2,OD/2),_e2=_sagAtOD(g2,CA2/2,OD/2);
+  const etVal=edgeThickOD(s1,s2,CT,_e1,_e2);
+  if(!isNaN(etVal)){
+    const etYpos=py(hOD)-14;
     const etLeft=px(xS1(hOD)),etRight=px(xS2(hOD));
     if(Math.abs(etRight-etLeft)>8){
       ctx.strokeStyle=preview?"#64748b":"#1a1a1a";ctx.lineWidth=1.2;ctx.setLineDash([]);
-      // horizontal arrow line
       ctx.beginPath();ctx.moveTo(etLeft,etYpos);ctx.lineTo(etRight,etYpos);ctx.stroke();
-      // arrowheads
       ctx.beginPath();ctx.moveTo(etLeft+6,etYpos-3);ctx.lineTo(etLeft,etYpos);ctx.lineTo(etLeft+6,etYpos+3);ctx.stroke();
       ctx.beginPath();ctx.moveTo(etRight-6,etYpos-3);ctx.lineTo(etRight,etYpos);ctx.lineTo(etRight-6,etYpos+3);ctx.stroke();
-      // vertical tick lines at S1 and S2 top points
       ctx.beginPath();ctx.moveTo(etLeft,py(hOD));ctx.lineTo(etLeft,etYpos-2);ctx.stroke();
       ctx.beginPath();ctx.moveTo(etRight,py(hOD));ctx.lineTo(etRight,etYpos-2);ctx.stroke();
-      // label
       ctx.font="bold 11px 'Nunito',sans-serif";ctx.fillStyle=preview?"#92400e":"#1a1a1a";ctx.textAlign="center";
       ctx.fillText("ET="+etVal.toFixed(2)+"mm",(etLeft+etRight)/2,etYpos-4);
       ctx.textAlign="left";
     }
   }
-  // S1 label (left, above axis)
   ctx.font="bold 13px 'Nunito',sans-serif";ctx.fillStyle=cA;
   ctx.textAlign="right";ctx.fillText("S1",px(xMin)+2,py(hOD*0.3));
   ctx.textAlign="left";ctx.fillText("S2",px(xMax)-2,py(hOD*0.3));
-  // ROC labels: on curved surface faces, offset outward, separated from S1/S2
   ctx.font="bold 11px 'Nunito',sans-serif";
   if(s1!=="plano"&&roc1>0){
-    ctx.fillStyle=preview?"#1e3a8a":"#1a1a1a";ctx.textAlign="right";
+    ctx.fillStyle=cAmb;ctx.textAlign="right";
     ctx.fillText("R1="+roc1.toFixed(1),LP[Math.round(N*0.25)][0]-4,LP[Math.round(N*0.25)][1]+4);
   }
   if(s2!=="plano"&&roc2>0){
-    ctx.fillStyle=preview?"#1e3a8a":"#1a1a1a";ctx.textAlign="left";
+    ctx.fillStyle=cAmb;ctx.textAlign="left";
     ctx.fillText("R2="+roc2.toFixed(1),RP[Math.round(N*0.25)][0]+4,RP[Math.round(N*0.25)][1]+4);
   }
   ctx.textAlign="left";
-  // CA labels below lower dashed lines
-  // CA: vertical arrow on right side (diametric)
   const caArrowX=Math.max(px(xs2v),px(xs2e))+18;
   if(hCA1<hOD-0.5){
     const ca1T=py(hCA1),ca1B=py(-hCA1);
@@ -1660,7 +1700,7 @@ function drawLensCanvas(id,p,preview=false){
     ctx.beginPath();ctx.moveTo(caArrowX-3,ca1B-6);ctx.lineTo(caArrowX,ca1B);ctx.lineTo(caArrowX+3,ca1B-6);ctx.stroke();
     ctx.save();ctx.font="bold 11px 'Nunito',sans-serif";ctx.fillStyle=cA2;
     ctx.translate(caArrowX+10,(ca1T+ca1B)/2);ctx.rotate(Math.PI/2);
-    ctx.textAlign="center";ctx.fillText("⌀CA1="+CA1.toFixed(2)+"mm",0,0);ctx.restore();
+    ctx.textAlign="center";ctx.fillText("\u2300CA1="+CA1.toFixed(2)+"mm",0,0);ctx.restore();
   }
   if(hCA2<hOD-0.5&&Math.abs(hCA2-hCA1)>0.5){
     const ca2ArrowX=caArrowX+28,ca2T=py(hCA2),ca2B=py(-hCA2);
@@ -1670,8 +1710,19 @@ function drawLensCanvas(id,p,preview=false){
     ctx.beginPath();ctx.moveTo(ca2ArrowX-3,ca2B-6);ctx.lineTo(ca2ArrowX,ca2B);ctx.lineTo(ca2ArrowX+3,ca2B-6);ctx.stroke();
     ctx.save();ctx.font="bold 11px 'Nunito',sans-serif";ctx.fillStyle=cAmb;
     ctx.translate(ca2ArrowX+10,(ca2T+ca2B)/2);ctx.rotate(Math.PI/2);
-    ctx.textAlign="center";ctx.fillText("⌀CA2="+CA2.toFixed(2)+"mm",0,0);ctx.restore();
+    ctx.textAlign="center";ctx.fillText("\u2300CA2="+CA2.toFixed(2)+"mm",0,0);ctx.restore();
   }
+}
+function _showCanvasGeomError(canvasId,msg){
+  const canvas=document.getElementById(canvasId);if(!canvas)return;
+  const CW=canvas.offsetWidth||320,CH=Math.max(CW,200);canvas.width=CW;canvas.height=CH;
+  const ctx=canvas.getContext("2d");ctx.clearRect(0,0,CW,CH);
+  ctx.fillStyle="rgba(248,113,113,0.13)";ctx.fillRect(0,0,CW,CH);
+  ctx.strokeStyle="#f87171";ctx.lineWidth=1.5;ctx.setLineDash([6,4]);ctx.strokeRect(4,4,CW-8,CH-8);ctx.setLineDash([]);
+  ctx.fillStyle="#f87171";ctx.textAlign="center";
+  ctx.font="bold 13px 'Nunito',sans-serif";ctx.fillText("\u26a0 Invalid Geometry",CW/2,CH/2-14);
+  ctx.font="11px 'Nunito',sans-serif";ctx.fillText((msg||"").length>52?(msg||"").slice(0,50)+"\u2026":(msg||""),CW/2,CH/2+6);
+  ctx.textAlign="left";
 }
 function liveDrawLens(){
   const od=parseFloat(document.getElementById("c-od").value),ct=getCTVal(),summary=document.getElementById("live-summary");
@@ -1679,13 +1730,19 @@ function liveDrawLens(){
   try{
     const s1=document.getElementById("s1t").value.toLowerCase(),s2=document.getElementById("s2t").value.toLowerCase();
     const ca1=parseFloat(document.getElementById("c-ca1").value)||od,ca2=parseFloat(document.getElementById("c-ca2").value)||od;
-    if(ca1>od*1.001||ca2>od*1.001)return;
+    if(ca1>od*1.001||ca2>od*1.001){if(summary)summary.style.display="none";return;}
     const g1=calcSag(s1,document.getElementById("s1ri").value,ca1),g2=calcSag(s2,document.getElementById("s2ri").value,ca2);
+    // Pre-validate ET at OD rim
+    const _sagODlv=(roc,hOD_)=>{if(!roc||roc<=0)return 0;const d=roc*roc-hOD_*hOD_;return d<0?roc:roc-Math.sqrt(d);};
+    const roc1lv=parseFloat(document.getElementById("s1ri").value)||0,roc2lv=parseFloat(document.getElementById("s2ri").value)||0;
+    const e1lv=(s1==="convex"?_sagODlv(roc1lv,od/2):0),e2lv=(s2==="convex"?_sagODlv(roc2lv,od/2):0);
+    const etLv=ct-e1lv-e2lv;
+    if(etLv<0){if(summary)summary.style.display="none";_showCanvasGeomError("c-canvas","ET="+etLv.toFixed(2)+"mm — sags exceed CT ("+ct.toFixed(2)+"mm)");return;}
     window._lastLensParams={id:"c-canvas",p:{OD:od,CT:ct,CA1:ca1,CA2:ca2,s1,s2,g1,g2}};drawLensCanvas("c-canvas",{OD:od,CT:ct,CA1:ca1,CA2:ca2,s1,s2,g1,g2},true);
     const matSel=document.getElementById("c-mat").value;
     let dens=matSel==="Custom Density"?parseFloat(document.getElementById("c-cd").value)||0:getDens(matSel)||0;
     if(dens>0&&summary){const{Vrb,Vt}=lensVol(od,ca1,ca2,g1,g2,s1,s2,ct);const lWt=(Vt/1000)*dens,bWt=(Vrb/1000)*dens;document.getElementById("lw-lens-wt").textContent=lWt.toFixed(3)+" g";document.getElementById("lw-blank-wt").textContent=bWt.toFixed(3)+" g";summary.style.display="block";}else if(summary)summary.style.display="none";
-  }catch(e){if(summary)summary.style.display="none";}
+  }catch(e){if(summary)summary.style.display="none";_showCanvasGeomError("c-canvas",e.message);}
 }
 function liveDrawRect(){
   const L=parseFloat(document.getElementById("r-L").value),W=parseFloat(document.getElementById("r-W").value),H=parseFloat(document.getElementById("r-H").value),summary=document.getElementById("r-live-summary");
