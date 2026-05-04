@@ -1037,6 +1037,37 @@ function _getStoredFile(fname,cb){_openFileDB().then(db=>{const req=db.transacti
 function _copyText(text){if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).catch(()=>{});}const ta=document.createElement('textarea');ta.value=text;ta.style.cssText='position:fixed;top:0;left:0;width:2px;height:2px;opacity:0;z-index:99998;';document.body.appendChild(ta);ta.focus();ta.select();let ok=false;try{ok=document.execCommand('copy');}catch(e){}document.body.removeChild(ta);return ok;}
 function _dataUriToText(dataUri){const b64=dataUri.split(',')[1];const raw=atob(b64);const stripped=(raw.charCodeAt(0)===0xEF&&raw.charCodeAt(1)===0xBB&&raw.charCodeAt(2)===0xBF)?raw.slice(3):raw;try{return decodeURIComponent(escape(stripped));}catch(e){return stripped;}}
 
+// ANDROID-AWARE DOWNLOAD HELPER
+// Android WebView blocks <a download> and window.open(dataUri).
+// Strategy: try Web Share API first (works in Android WebView), then anchor click, then open new tab.
+function _triggerDownload(dataUri,fname,mimeType){
+  // Try Web Share API with blob (Android WebView supports this)
+  function _tryShare(){
+    try{
+      const b64=dataUri.split(',')[1];
+      const bin=atob(b64);
+      const arr=new Uint8Array(bin.length);
+      for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);
+      const blob=new Blob([arr],{type:mimeType||'application/octet-stream'});
+      const file=new File([blob],fname,{type:mimeType||'application/octet-stream'});
+      if(navigator.canShare&&navigator.canShare({files:[file]})){
+        navigator.share({files:[file],title:fname}).catch(e=>{if(e&&e.name!=='AbortError')_tryAnchor();});
+        return true;
+      }
+    }catch(e){}
+    return false;
+  }
+  function _tryAnchor(){
+    try{
+      const a=document.createElement('a');a.href=dataUri;a.download=fname;
+      document.body.appendChild(a);a.click();document.body.removeChild(a);
+    }catch(e){
+      try{window.open(dataUri,'_blank');}catch(e2){}
+    }
+  }
+  if(!_tryShare())_tryAnchor();
+}
+
 // IN-APP VIEWERS
 function _showCSVViewer(csvText,fname){
   _rmOv('_oc-csv');const ov=_mkOv('_oc-csv','#020a12');
@@ -1055,7 +1086,7 @@ function _showImageViewer(dataUri,fname){
   _rmOv('_oc-img');const ov=_mkOv('_oc-img','#111');ov.style.overflowY='hidden';ov.style.display='flex';ov.style.flexDirection='column';
   ov.appendChild(_mkHdr('📷 '+fname,()=>ov.remove()));
   const tip=_mkEl('div','padding:8px 14px;background:#071a0e;flex-shrink:0;text-align:center;font-size:.73rem;color:#4ade80;line-height:1.8;');
-  tip.innerHTML='✅ Image ready<br><span style="color:#fbbf24;font-size:.72rem;">⬇ Use button below to save to device</span>';
+  tip.innerHTML='✅ Image ready — tap <b>⬇ Save</b> to share/save<br><span style="color:#fbbf24;font-size:.72rem;">On Android: share sheet will open → choose Save to Files</span>';
   ov.appendChild(tip);
   const zbar=_mkEl('div','display:flex;align-items:center;justify-content:center;gap:12px;padding:6px;background:#0c1d30;flex-shrink:0;');
   let scale=1,tx=0,ty=0,lastD=0,lastTx=0,lastTy=0,dragging=false,dragX=0,dragY=0;
@@ -1063,7 +1094,7 @@ function _showImageViewer(dataUri,fname){
   const img=document.createElement('img');img.src=dataUri;img.style.cssText='max-width:100%;display:block;transform-origin:center center;user-select:none;pointer-events:none;';
   img.oncontextmenu=e=>e.stopPropagation();wrap.appendChild(img);
   function applyT(){img.style.transform='scale('+scale+') translate('+tx+'px,'+ty+'px)';}
-  [['⬇ Save',()=>{try{const a=document.createElement('a');a.href=dataUri;a.download=fname;document.body.appendChild(a);a.click();document.body.removeChild(a);}catch(e){window.open(dataUri,'_blank');}}],['➕',()=>{scale=Math.min(scale*1.4,8);applyT();}],['1:1',()=>{scale=1;tx=0;ty=0;applyT();}],['➖',()=>{scale=Math.max(scale/1.4,0.5);applyT();}]].forEach(([lbl,fn])=>{
+  [['⬇ Save',()=>{_triggerDownload(dataUri,fname,'image/png');}],['➕',()=>{scale=Math.min(scale*1.4,8);applyT();}],['1:1',()=>{scale=1;tx=0;ty=0;applyT();}],['➖',()=>{scale=Math.max(scale/1.4,0.5);applyT();}]].forEach(([lbl,fn])=>{
     const b=_mkEl('button','padding:4px 16px;border-radius:6px;background:#1a3a5c;color:#e2e8f0;border:none;font-size:1rem;cursor:pointer;');
     b.style.background=lbl.includes('Save')?'#16a34a':'#1a3a5c';b.textContent=lbl;b.onclick=fn;zbar.appendChild(b);
   });
@@ -1161,8 +1192,8 @@ function _zipAndSaveXLSX(ct,wbXml,wbRels,relsXml,sheetXml){
     zip.generateAsync({type:'blob',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}).then(blob=>{
       const ts=new Date().toISOString().slice(0,10);
       _storeFile('OptiCost_'+ts+'.xlsx',blob,(dataUri,err)=>{
-        if(dataUri){const a=document.createElement('a');a.href=dataUri;a.download='OptiCost_'+ts+'.xlsx';a.click();}
-        showModal('✅ Excel Saved','OptiCost_'+ts+'.xlsx downloaded and saved to Files tab.');
+        if(dataUri){_triggerDownload(dataUri,'OptiCost_'+ts+'.xlsx','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');}
+        showModal('✅ Excel Saved','OptiCost_'+ts+'.xlsx saved to Files tab. Use share sheet to export.');
       });
     });
   }catch(e){_buildAndSaveCSV();}
@@ -1174,8 +1205,8 @@ function _buildAndSaveCSV(){
   const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
   const ts=new Date().toISOString().slice(0,10);
   _storeFile('OptiCost_'+ts+'.csv',blob,(dataUri,err)=>{
-    if(dataUri){const a=document.createElement('a');a.href=dataUri;a.download='OptiCost_'+ts+'.csv';document.body.appendChild(a);a.click();document.body.removeChild(a);}
-    showModal('✅ CSV Saved','Download triggered. Also saved in Files tab.');
+    if(dataUri){_triggerDownload(dataUri,'OptiCost_'+ts+'.csv','text/csv');}
+    showModal('✅ CSV Saved','CSV saved. Use share sheet to export, or view in Files tab.');
   });
 }
 function _buildAndSaveXLSX(){
@@ -1239,8 +1270,8 @@ function saveReportWord(){
       const ts=new Date().toISOString().slice(0,10);
       const fname='OptiCost_'+ts+'.docx';
       _storeFile(fname,blob,(dataUri,err)=>{
-        if(dataUri){const a=document.createElement('a');a.href=dataUri;a.download=fname;a.click();}
-        showModal('✅ Word Saved',fname+' downloaded. Open in Microsoft Word or Google Docs.');
+        if(dataUri){_triggerDownload(dataUri,fname,'application/vnd.openxmlformats-officedocument.wordprocessingml.document');}
+        showModal('✅ Word Saved',fname+' saved. Use share sheet to open in Word/Google Docs.');
       });
     });
   };
@@ -1296,8 +1327,8 @@ function _zipAndSaveXLSX(ct,wbXml,wbRels,relsXml,sheetXml){
     zip.generateAsync({type:'blob',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}).then(blob=>{
       const ts=new Date().toISOString().slice(0,10);
       _storeFile('OptiCost_'+ts+'.xlsx',blob,(dataUri,err)=>{
-        if(dataUri){const a=document.createElement('a');a.href=dataUri;a.download='OptiCost_'+ts+'.xlsx';a.click();}
-        showModal('✅ Excel Saved','OptiCost_'+ts+'.xlsx downloaded and saved to Files tab.');
+        if(dataUri){_triggerDownload(dataUri,'OptiCost_'+ts+'.xlsx','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');}
+        showModal('✅ Excel Saved','OptiCost_'+ts+'.xlsx saved. Use share sheet to export.');
       });
     });
   }catch(e){_buildAndSaveCSV();}
@@ -1309,8 +1340,8 @@ function _buildAndSaveCSV(){
   const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
   const ts=new Date().toISOString().slice(0,10);
   _storeFile('OptiCost_'+ts+'.csv',blob,(dataUri,err)=>{
-    if(dataUri){const a=document.createElement('a');a.href=dataUri;a.download='OptiCost_'+ts+'.csv';document.body.appendChild(a);a.click();document.body.removeChild(a);}
-    showModal('✅ CSV Saved','Download triggered. Also saved in Files tab.');
+    if(dataUri){_triggerDownload(dataUri,'OptiCost_'+ts+'.csv','text/csv');}
+    showModal('✅ CSV Saved','CSV saved. Use share sheet to export, or view in Files tab.');
   });
 }
 function _buildAndSaveXLSX(){
@@ -1371,8 +1402,8 @@ function saveReportWord(){
   const fname='OptiCost_'+ts+'.doc';
   _storeFile(fname,blob,(dataUri,err)=>{
     if(err)console.warn('IDB err:',err);
-    if(dataUri){const a=document.createElement('a');a.href=dataUri;a.download=fname;a.click();}
-    showModal('✅ Word Saved',fname+' downloaded. Open in Microsoft Word.');
+    if(dataUri){_triggerDownload(dataUri,fname,'application/vnd.ms-word');}
+    showModal('✅ Word Saved',fname+' saved. Use share sheet to open in Word.');
   });
 }
 function _saveReportHTML(){
