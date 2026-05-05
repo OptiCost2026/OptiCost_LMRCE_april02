@@ -582,10 +582,11 @@
             <div class="card">
                 <div class="sec-hdr">🗂 SAVED FILES LIBRARY</div>
                 <div style="background:var(--surf2);border-radius:8px;padding:9px 11px;margin-bottom:10px;font-size:.72rem;color:var(--muted);line-height:1.85;">
-                    <div style="color:var(--accent);font-weight:700;margin-bottom:5px;">How to use your saved files:</div>
-                    <div>📊 <b>CSV</b> → tap <b>👁 View</b> → tap <b>📋 Copy All</b> → paste in Google Sheets or Gmail</div>
-                    <div>🖼 <b>PNG</b> → tap <b>👁 View</b> → <b>long-press the image → Save image</b> to Gallery</div>
-                    <div>📄 <b>Report</b> → tap <b>👁 View</b> → long-press to copy text</div>
+                    <div style="color:var(--accent);font-weight:700;margin-bottom:5px;">💾 Save to your Android device:</div>
+                    <div>📊 <b>CSV / Excel</b> → tap <b>📤 Share</b> → choose <b>Save to Files</b> or Google Drive</div>
+                    <div>🖼 <b>PNG</b> → tap <b>📤 Share</b> → save, or <b>long-press image → Save</b></div>
+                    <div>📄 <b>Report / DOC</b> → tap <b>📤 Share</b> → open in Word / Google Docs</div>
+                    <div style="margin-top:4px;color:var(--amber);font-size:.68rem">⚠ If auto-save fails, the Share sheet is your most reliable option.</div>
                 </div>
                 <div id="_files-list"><div style="color:var(--muted);font-size:.8rem;padding:16px;text-align:center">Loading…</div></div>
                 <button onclick="renderFilesLib()" style="width:100%;margin-top:10px;padding:10px;background:var(--surf2);border:1px solid var(--border);border-radius:8px;color:var(--accent);font-weight:700;font-family:'Nunito',sans-serif;font-size:.82rem;cursor:pointer">🔄 Refresh List</button>
@@ -1037,58 +1038,199 @@ function _getStoredFile(fname,cb){_openFileDB().then(db=>{const req=db.transacti
 function _copyText(text){if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).catch(()=>{});}const ta=document.createElement('textarea');ta.value=text;ta.style.cssText='position:fixed;top:0;left:0;width:2px;height:2px;opacity:0;z-index:99998;';document.body.appendChild(ta);ta.focus();ta.select();let ok=false;try{ok=document.execCommand('copy');}catch(e){}document.body.removeChild(ta);return ok;}
 function _dataUriToText(dataUri){const b64=dataUri.split(',')[1];const raw=atob(b64);const stripped=(raw.charCodeAt(0)===0xEF&&raw.charCodeAt(1)===0xBB&&raw.charCodeAt(2)===0xBF)?raw.slice(3):raw;try{return decodeURIComponent(escape(stripped));}catch(e){return stripped;}}
 
-// ANDROID-AWARE DOWNLOAD HELPER
-// Android WebView blocks <a download> and window.open(dataUri).
-// Strategy: try Web Share API first (works in Android WebView), then anchor click, then open new tab.
-function _triggerDownload(dataUri,fname,mimeType){
-  // Try Web Share API with blob (Android WebView supports this)
-  function _tryShare(){
+// ═══════════════════════════════════════════════════════════════
+// ANDROID-AWARE FILE SAVE SYSTEM
+// Strategy (in order):
+//   1. Web Share API with File object  → works in most Android WebViews
+//   2. WebIntoApp JS bridge             → native save if available
+//   3. Permission request dialog        → ask user, then share again
+//   4. Save overlay                     → copy / long-press instructions
+// ═══════════════════════════════════════════════════════════════
+let _androidPermAsked=false;
+
+function _blobFromDataUri(dataUri,mimeType){
+  try{
+    const b64=dataUri.split(',')[1];
+    const bin=atob(b64);
+    const arr=new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);
+    return new Blob([arr],{type:mimeType||'application/octet-stream'});
+  }catch(e){return null;}
+}
+
+function _androidSaveOrShare(dataUri,fname,mimeType,blobArg){
+  const blob=blobArg||_blobFromDataUri(dataUri,mimeType);
+
+  // ── 1. Web Share API with File (best on Android) ──
+  function tryWebShare(onFail){
     try{
-      const b64=dataUri.split(',')[1];
-      const bin=atob(b64);
-      const arr=new Uint8Array(bin.length);
-      for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);
-      const blob=new Blob([arr],{type:mimeType||'application/octet-stream'});
+      if(!navigator.share)return onFail();
       const file=new File([blob],fname,{type:mimeType||'application/octet-stream'});
-      if(navigator.canShare&&navigator.canShare({files:[file]})){
-        navigator.share({files:[file],title:fname}).catch(e=>{if(e&&e.name!=='AbortError')_tryAnchor();});
-        return true;
+      if(navigator.canShare&&!navigator.canShare({files:[file]}))return onFail();
+      navigator.share({files:[file],title:fname,text:'OptiCost Report'})
+        .then(()=>showModal('✅ Saved','File shared successfully. Choose "Save to Files" or "Download" in the share sheet.'))
+        .catch(e=>{if(e&&e.name==='AbortError')return;onFail();});
+    }catch(e){onFail();}
+  }
+
+  // ── 2. WebIntoApp / Android JS bridge ──
+  function tryAndroidBridge(onFail){
+    try{
+      // WebIntoApp exposes window.Android or window.webkit.messageHandlers
+      if(window.Android&&typeof window.Android.saveFile==='function'){
+        window.Android.saveFile(fname,dataUri,mimeType||'application/octet-stream');
+        showModal('✅ Saved','File sent to Android Downloads folder.');
+        return;
+      }
+      if(window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.saveFile){
+        window.webkit.messageHandlers.saveFile.postMessage({name:fname,data:dataUri,mime:mimeType});
+        showModal('✅ Saved','File sent to device.');
+        return;
       }
     }catch(e){}
-    return false;
+    onFail();
   }
-  function _tryAnchor(){
+
+  // ── 3. Anchor download with Blob URL ──
+  function tryAnchorBlob(onFail){
     try{
-      // Convert data URI → Blob URL: avoids WebView crash on large data URIs
-      let hrefUrl=dataUri;
-      try{
-        const b64=dataUri.split(',')[1];
-        const bin=atob(b64);
-        const arr=new Uint8Array(bin.length);
-        for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);
-        const blob=new Blob([arr],{type:mimeType||'application/octet-stream'});
-        hrefUrl=URL.createObjectURL(blob);
-      }catch(e2){}
-      const a=document.createElement('a');a.href=hrefUrl;a.download=fname;
+      const burl=URL.createObjectURL(blob);
+      const a=document.createElement('a');
+      a.href=burl;a.download=fname;
       document.body.appendChild(a);a.click();document.body.removeChild(a);
-      // Revoke after short delay
-      if(hrefUrl!==dataUri)setTimeout(()=>{try{URL.revokeObjectURL(hrefUrl);}catch(e){}},5000);
-    }catch(e){
-      // Last resort: try blob URL in new tab (safer than raw data URI for WebView)
-      try{
-        const b64=dataUri.split(',')[1];
-        const bin=atob(b64);
-        const arr=new Uint8Array(bin.length);
-        for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);
-        const blob=new Blob([arr],{type:mimeType||'application/octet-stream'});
-        const burl=URL.createObjectURL(blob);
-        window.open(burl,'_blank');
-        setTimeout(()=>{try{URL.revokeObjectURL(burl);}catch(e){}},8000);
-      }catch(e2){}
-    }
+      setTimeout(()=>{try{URL.revokeObjectURL(burl);}catch(e){}},8000);
+      // Show a soft confirmation — anchor click is silent on Android
+      setTimeout(()=>_showAndroidSaveOverlay(dataUri,fname,mimeType,blob,'anchor'),600);
+    }catch(e){onFail();}
   }
-  if(!_tryShare())_tryAnchor();
+
+  // ── 4. Permission request + retry ──
+  function askPermissionThenShare(){
+    if(_androidPermAsked){
+      // Already asked once — go straight to overlay
+      _showAndroidSaveOverlay(dataUri,fname,mimeType,blob,'noperm');
+      return;
+    }
+    _androidPermAsked=true;
+    // Show a confirm dialog asking the user to grant storage permission
+    const overlay=document.createElement('div');
+    overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:999999;display:flex;align-items:center;justify-content:center;padding:20px;font-family:Nunito,sans-serif';
+    overlay.innerHTML=`
+      <div style="background:#0c1d30;border-radius:14px;padding:22px 18px;max-width:360px;width:100%;border:1.5px solid #1a8ad4;box-shadow:0 8px 32px rgba(0,0,0,.6)">
+        <div style="font-family:Rajdhani,sans-serif;font-size:1.1rem;font-weight:700;color:#22d3ee;letter-spacing:1px;margin-bottom:10px">📂 Storage Permission</div>
+        <p style="font-size:.85rem;color:#e8f4ff;line-height:1.65;margin-bottom:14px">
+          To save files to your device, OptiCost needs <b style="color:#fbbf24">Storage / Files & Media</b> permission.<br/><br/>
+          Tap <b style="color:#4ade80">Allow</b> below — if Android shows a permission popup, tap <b>Allow</b> there too.
+        </p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <button id="_perm-allow" style="padding:11px;background:#16a34a;color:#fff;border:none;border-radius:8px;font-family:Nunito,sans-serif;font-weight:700;font-size:.88rem;cursor:pointer">✅ Allow & Save</button>
+          <button id="_perm-skip" style="padding:11px;background:#1a3a5c;color:#e2e8f0;border:1px solid #0e2e4e;border-radius:8px;font-family:Nunito,sans-serif;font-weight:700;font-size:.88rem;cursor:pointer">Skip — Show me how</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    document.getElementById('_perm-allow').onclick=()=>{
+      overlay.remove();
+      // Try requesting permission via Storage Access API if available
+      if(navigator.storage&&navigator.storage.persist){
+        navigator.storage.persist().then(()=>{
+          tryWebShare(()=>tryAnchorBlob(()=>_showAndroidSaveOverlay(dataUri,fname,mimeType,blob,'manual')));
+        }).catch(()=>{
+          tryWebShare(()=>tryAnchorBlob(()=>_showAndroidSaveOverlay(dataUri,fname,mimeType,blob,'manual')));
+        });
+      }else{
+        tryWebShare(()=>tryAnchorBlob(()=>_showAndroidSaveOverlay(dataUri,fname,mimeType,blob,'manual')));
+      }
+    };
+    document.getElementById('_perm-skip').onclick=()=>{overlay.remove();_showAndroidSaveOverlay(dataUri,fname,mimeType,blob,'manual');};
+  }
+
+  // ── Entry: try share → bridge → anchor → ask permission ──
+  tryWebShare(()=>tryAndroidBridge(()=>tryAnchorBlob(()=>askPermissionThenShare())));
 }
+
+// ── Save Overlay: shown when automatic save is uncertain on Android ──
+function _showAndroidSaveOverlay(dataUri,fname,mimeType,blob,mode){
+  _rmOv('_oc-androidsave');
+  const isImg=mimeType&&mimeType.startsWith('image/');
+  const isDoc=fname.endsWith('.doc')||fname.endsWith('.docx');
+  const ov=_mkOv('_oc-androidsave','#020a12');
+  ov.appendChild(_mkHdr('📥 Save: '+fname,()=>ov.remove()));
+
+  const tip=_mkEl('div','padding:10px 14px;background:#071624;flex-shrink:0;font-size:.78rem;color:#e8f4ff;line-height:1.9;border-bottom:1px solid #0e2e4e;');
+
+  if(mode==='anchor'){
+    // Anchor was clicked; file may or may not have downloaded
+    tip.innerHTML=`<div style="color:#4ade80;font-weight:700;margin-bottom:4px">✅ Download triggered!</div>
+If nothing appeared in your Downloads folder, use the <b style="color:#fbbf24">Share Sheet</b> button below.<br/>
+<span style="color:#7db0cc">Check <b>My Files → Downloads</b> or your notification bar.</span>`;
+  } else if(mode==='noperm'){
+    tip.innerHTML=`<div style="color:#f87171;font-weight:700;margin-bottom:4px">⚠ Permission unavailable</div>
+Auto-save is blocked. Tap <b style="color:#fbbf24">Share Sheet</b> and choose <b>Save to Files</b> or <b>Google Drive</b>.`;
+  } else {
+    tip.innerHTML=`<div style="color:#fbbf24;font-weight:700;margin-bottom:4px">📤 Save to your device</div>
+Auto-save isn't supported in this app environment.<br/>Use the options below to get the file onto your device.`;
+  }
+  ov.appendChild(tip);
+
+  const btnArea=_mkEl('div','padding:10px 12px;display:flex;flex-direction:column;gap:9px;flex-shrink:0;background:#030d18;border-bottom:1px solid #0e2e4e;');
+
+  // Share Sheet button (most reliable on Android)
+  const btnShare=_mkEl('button','padding:13px;background:#1d6f42;color:#fff;border:none;border-radius:9px;font-family:Nunito,sans-serif;font-weight:700;font-size:.88rem;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px');
+  btnShare.innerHTML='📤 Open Share Sheet <span style="font-size:.72rem;opacity:.8">(recommended)</span>';
+  btnShare.onclick=()=>{
+    try{
+      const file=new File([blob],fname,{type:mimeType||'application/octet-stream'});
+      if(navigator.share&&navigator.canShare&&navigator.canShare({files:[file]})){
+        navigator.share({files:[file],title:fname}).catch(()=>{});
+      }else if(navigator.share){
+        navigator.share({title:fname,text:'OptiCost file: '+fname}).catch(()=>{});
+      }
+    }catch(e){}
+  };
+  btnArea.appendChild(btnShare);
+
+  if(isImg){
+    // For images: show the image so user can long-press save
+    const btnImg=_mkEl('button','padding:13px;background:#0e7490;color:#fff;border:none;border-radius:9px;font-family:Nunito,sans-serif;font-weight:700;font-size:.88rem;cursor:pointer');
+    btnImg.textContent='🖼 View Image (long-press → Save)';
+    btnImg.onclick=()=>{ov.remove();_showImageViewer(dataUri,fname);};
+    btnArea.appendChild(btnImg);
+  }
+
+  if(isDoc){
+    const btnView=_mkEl('button','padding:13px;background:#0e7490;color:#fff;border:none;border-radius:9px;font-family:Nunito,sans-serif;font-weight:700;font-size:.88rem;cursor:pointer');
+    btnView.textContent='📄 View Report in Browser';
+    btnView.onclick=()=>{
+      try{const burl=URL.createObjectURL(blob);window.open(burl,'_blank');setTimeout(()=>URL.revokeObjectURL(burl),10000);}catch(e){}
+    };
+    btnArea.appendChild(btnView);
+  }
+
+  const btnDone=_mkEl('button','padding:11px;background:#1a3a5c;color:#e2e8f0;border:1px solid #0e2e4e;border-radius:9px;font-family:Nunito,sans-serif;font-weight:700;font-size:.85rem;cursor:pointer');
+  btnDone.textContent='✓ Done — file is in Files tab';
+  btnDone.onclick=()=>ov.remove();
+  btnArea.appendChild(btnDone);
+  ov.appendChild(btnArea);
+
+  // Instruction card
+  const instr=_mkEl('div','flex:1;overflow-y:auto;padding:12px 14px;font-size:.77rem;color:#7db0cc;line-height:1.95;');
+  instr.innerHTML=`<b style="color:#22d3ee">📋 Step-by-step (Android):</b><br/>
+1. Tap <b style="color:#4ade80">Open Share Sheet</b> above<br/>
+2. Choose <b style="color:#fbbf24">Save to Files</b> or <b style="color:#fbbf24">Download</b><br/>
+3. Or choose <b>Google Drive / WhatsApp / Gmail</b><br/><br/>
+<b style="color:#22d3ee">📋 Alternative:</b><br/>
+→ Go to <b>Files tab</b> → tap <b>👁 View</b> → share from there<br/><br/>
+<span style="color:#475569">The file is permanently stored in the <b>Files tab</b> inside this app.</span>`;
+  ov.appendChild(instr);
+  document.body.appendChild(ov);
+}
+
+// Legacy wrapper — kept for compatibility with existing calls in xlsx/csv/png paths
+function _triggerDownload(dataUri,fname,mimeType){
+  const blob=_blobFromDataUri(dataUri,mimeType);
+  _androidSaveOrShare(dataUri,fname,mimeType,blob);
+}
+
 
 // IN-APP VIEWERS
 function _showCSVViewer(csvText,fname){
@@ -1150,11 +1292,12 @@ function renderFilesLib(){
     if(!files||!files.length){el.innerHTML='<div style="color:var(--muted);font-size:.82rem;padding:20px 14px;text-align:center;line-height:1.9;">No files saved yet.<br><b style="color:var(--accent);">How to save:</b><br>→ Calculate → tap 💾 Save CSV<br>→ Results tab → 📷 PNG or 📄 Report</div>';return;}
     files.sort((a,b)=>b.ts-a.ts);
     let html='';
-    files.forEach(f=>{const d=new Date(f.ts).toLocaleString();const icon=f.mime.startsWith('image/')?'🖼':f.fname.endsWith('.csv')?'📊':'📄';const sn=f.fname.replace(/\\/g,'\\\\').replace(/'/g,"\\'");html+=`<div style="padding:11px 0;border-bottom:1px solid var(--border);"><div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:7px;"><div style="flex:1;min-width:0;"><div style="font-size:.8rem;font-weight:700;color:var(--text);word-break:break-all;">${icon} ${f.fname}</div><div style="font-size:.64rem;color:var(--muted);margin-top:2px;">${d}</div></div></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;"><button onclick="viewStoredFile('${sn}')" style="padding:10px 4px;background:var(--accent);border:none;color:var(--tag-txt);font-size:.73rem;font-weight:700;border-radius:7px;cursor:pointer;">👁 View / Copy</button><button onclick="deleteStoredFile('${sn}')" style="padding:10px 4px;background:var(--surf2);border:1px solid var(--red);color:var(--red);font-size:.73rem;font-weight:700;border-radius:7px;cursor:pointer;">🗑 Delete</button></div></div>`;});
+    files.forEach(f=>{const d=new Date(f.ts).toLocaleString();const icon=f.mime.startsWith('image/')?'🖼':f.fname.endsWith('.csv')?'📊':f.fname.endsWith('.xlsx')?'📊':'📄';const sn=f.fname.replace(/\\/g,'\\\\').replace(/'/g,"\\'");html+=`<div style="padding:11px 0;border-bottom:1px solid var(--border);"><div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:7px;"><div style="flex:1;min-width:0;"><div style="font-size:.8rem;font-weight:700;color:var(--text);word-break:break-all;">${icon} ${f.fname}</div><div style="font-size:.64rem;color:var(--muted);margin-top:2px;">${d}</div></div></div><div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;"><button onclick="viewStoredFile('${sn}')" style="padding:10px 2px;background:var(--accent);border:none;color:var(--tag-txt);font-size:.70rem;font-weight:700;border-radius:7px;cursor:pointer;">👁 View</button><button onclick="shareStoredFile('${sn}')" style="padding:10px 2px;background:#1d6f42;border:none;color:#fff;font-size:.70rem;font-weight:700;border-radius:7px;cursor:pointer;">📤 Share</button><button onclick="deleteStoredFile('${sn}')" style="padding:10px 2px;background:var(--surf2);border:1px solid var(--red);color:var(--red);font-size:.70rem;font-weight:700;border-radius:7px;cursor:pointer;">🗑 Del</button></div></div>`;});
     el.innerHTML=html;
   });
 }
 function viewStoredFile(fname){_getStoredFile(fname,(err,rec)=>{if(err||!rec){showModal('Error',err?err.message:'File not found.');return;}if(rec.mime.startsWith('image/')){_showImageViewer(rec.data,rec.fname);}else if(rec.fname.toLowerCase().endsWith('.csv')){try{_showCSVViewer(_dataUriToText(rec.data),rec.fname);}catch(e){showModal('Error','Could not decode CSV: '+e.message);}}else{_showDocViewer(rec.data,rec.fname);}});}
+function shareStoredFile(fname){_getStoredFile(fname,(err,rec)=>{if(err||!rec){showModal('Error','File not found.');return;}const blob=_blobFromDataUri(rec.data,rec.mime);_androidSaveOrShare(rec.data,rec.fname,rec.mime,blob);});}
 function deleteStoredFile(fname){showConfirm('Delete',"Remove '"+fname+"' from saved files?",()=>{_deleteFile(fname,()=>renderFilesLib());});}
 
 // SAVE
@@ -1256,7 +1399,7 @@ function saveReportImage(fmt){
   if(!recs.length){showModal('No Data','Run a calculation first.');return;}
   showModal('Building…','Generating PNG report…');
   setTimeout(()=>{
-    try{_buildReportCanvas(cv=>{cv.toBlob(blob=>{_closeModal();try{cv.width=1;cv.height=1;}catch{}if(!blob){showModal('Error','Could not generate image.');return;}const ts=new Date().toISOString().slice(0,19).replace(/[T:]/g,'-');const fname='OptiCost_Report_'+ts+'.png';_storeFile(fname,blob,(dataUri,err)=>{if(err)console.warn('IDB store err:',err);if(dataUri)_showImageViewer(dataUri,fname);else showModal('Error','Could not save image.');});},'image/png');});}catch(e){_closeModal();showModal('Error','Image build failed: '+e.message);}
+    try{_buildReportCanvas(cv=>{cv.toBlob(blob=>{_closeModal();try{cv.width=1;cv.height=1;}catch{}if(!blob){showModal('Error','Could not generate image.');return;}const ts=new Date().toISOString().slice(0,19).replace(/[T:]/g,'-');const fname='OptiCost_Report_'+ts+'.png';_storeFile(fname,blob,(dataUri,err)=>{if(err)console.warn('IDB store err:',err);if(dataUri){_showImageViewer(dataUri,fname);setTimeout(()=>_androidSaveOrShare(dataUri,fname,'image/png',blob),400);}else showModal('Error','Could not save image.');});},'image/png');});}catch(e){_closeModal();showModal('Error','Image build failed: '+e.message);}
   },80);
 }
 
@@ -1271,41 +1414,122 @@ function saveReportWord(){
         partno=document.getElementById('rpt-partno').value.trim()||'—';
   const website=(document.getElementById('rpt-website')||{}).value||'www.opticsindia.com';
   const contact=(document.getElementById('rpt-contact')||{}).value||'+91-9886654729';
-  // Cross-section canvas image
-  const srcCanvas=document.getElementById('res-canvas')||document.getElementById('c-canvas')||document.getElementById('r-canvas');
-  const canvasImgTag=(srcCanvas&&srcCanvas.width>10)?
-    `<div style="text-align:center;margin:10px 0;background:#f0f4f8;border-radius:8px;padding:10px"><div style="font-size:9pt;color:#374151;font-weight:700;margin-bottom:6px;letter-spacing:1px">CROSS-SECTION PREVIEW</div><img src="${srcCanvas.toDataURL('image/png')}" style="max-width:100%;border-radius:6px;border:1px solid #d1d5db"/></div>`:
-    '';
-  const logoHtml=_logoDataUrl?`<img src="${_logoDataUrl}" style="max-height:55px;max-width:140px;object-fit:contain"/>`:`<div style="font-size:9pt;color:#94a3b8;font-weight:700">OPTICA</div>`;
+
+  // --- Cross-section canvas (same source logic as PNG export) ---
+  const liveC=document.getElementById('c-canvas')||document.getElementById('r-canvas');
+  let canvasDataUrl='';
+  if(liveC&&liveC.width>10){
+    // Re-draw a clean (non-preview) version on an offscreen canvas for best quality
+    try{
+      const oc=document.createElement('canvas');
+      oc.width=liveC.width;oc.height=liveC.height;
+      const octx=oc.getContext('2d');
+      octx.drawImage(liveC,0,0);
+      canvasDataUrl=oc.toDataURL('image/png');
+    }catch(e){try{canvasDataUrl=liveC.toDataURL('image/png');}catch(e2){}}
+  }
+
+  // --- Collect sections + rows ---
   const rtEl=document.getElementById('result-text');
   let trows='';
   if(rtEl){
-    // Walk sections for headers + rows
     let hasSections=false;
     rtEl.querySelectorAll('.res-section').forEach(sec=>{
       const hdrEl=sec.querySelector('.res-sec-hdr');
-      if(hdrEl){hasSections=true;trows+=`<tr style="background:#1a2e44"><td colspan="2" style="padding:7px 12px;color:#ffffff;font-weight:700;font-size:11pt;letter-spacing:1px">${_escHtml(hdrEl.textContent.trim())}</td></tr>`;}
+      if(hdrEl){hasSections=true;trows+=`<tr><td colspan="2" style="padding:5px 10px;background:#1a2e44;color:#fff;font-size:9.5pt;font-weight:700;letter-spacing:0.8px">${_escHtml(hdrEl.textContent.trim())}</td></tr>`;}
       sec.querySelectorAll('.res-row').forEach(r=>{
-        const lbl=r.querySelector('input:first-child');const val=r.querySelector('.res-val-inp');
-        if(lbl&&val){const isG=val.classList.contains('green'),isA=val.classList.contains('amber');const bg=isG?'#f0fdf4':isA?'#fffbeb':'#ffffff';const fc=isG?'#166534':isA?'#92400e':'#111827';const fw=isG||isA?'bold':'normal';trows+=`<tr style="background:${bg}"><td style="padding:6px 12px;font-size:11pt;color:#475569;font-weight:600;border-bottom:1px solid #e2e8f0;width:50%">${_escHtml(lbl.value)}</td><td style="padding:6px 12px;font-size:11pt;color:${fc};font-weight:${fw};text-align:right;border-bottom:1px solid #e2e8f0">${_escHtml(val.value)}</td></tr>`;}
+        const lbl=r.querySelector('input:first-child'),val=r.querySelector('.res-val-inp');
+        if(lbl&&val){const isG=val.classList.contains('green'),isA=val.classList.contains('amber');const bg=isG?'#f0fdf4':isA?'#fffbeb':'#f8fafc';const fc=isG?'#166534':isA?'#92400e':'#1e293b';const fw=isG||isA?'700':'400';
+        trows+=`<tr style="background:${bg}"><td style="padding:4px 10px;font-size:9pt;color:#475569;border-bottom:1px solid #e8edf2">${_escHtml(lbl.value)}</td><td style="padding:4px 10px;font-size:9pt;color:${fc};font-weight:${fw};text-align:right;border-bottom:1px solid #e8edf2">${_escHtml(val.value)}</td></tr>`;}
       });
     });
     if(!hasSections){
       rtEl.querySelectorAll('.res-row').forEach(r=>{
-        const lbl=r.querySelector('input:first-child');const val=r.querySelector('.res-val-inp');
-        if(lbl&&val){const isG=val.classList.contains('green'),isA=val.classList.contains('amber');const bg=isG?'#f0fdf4':isA?'#fffbeb':'#ffffff';const fc=isG?'#166534':isA?'#92400e':'#111827';const fw=isG||isA?'bold':'normal';trows+=`<tr style="background:${bg}"><td style="padding:6px 12px;font-size:11pt;color:#475569;font-weight:600;border-bottom:1px solid #e2e8f0;width:50%">${_escHtml(lbl.value)}</td><td style="padding:6px 12px;font-size:11pt;color:${fc};font-weight:${fw};text-align:right;border-bottom:1px solid #e2e8f0">${_escHtml(val.value)}</td></tr>`;
-        }
+        const lbl=r.querySelector('input:first-child'),val=r.querySelector('.res-val-inp');
+        if(lbl&&val){const isG=val.classList.contains('green'),isA=val.classList.contains('amber');const bg=isG?'#f0fdf4':isA?'#fffbeb':'#f8fafc';const fc=isG?'#166534':isA?'#92400e':'#1e293b';const fw=isG||isA?'700':'400';
+        trows+=`<tr style="background:${bg}"><td style="padding:4px 10px;font-size:9pt;color:#475569;border-bottom:1px solid #e8edf2">${_escHtml(lbl.value)}</td><td style="padding:4px 10px;font-size:9pt;color:${fc};font-weight:${fw};text-align:right;border-bottom:1px solid #e8edf2">${_escHtml(val.value)}</td></tr>`;}
       });
     }
   }
-  const html=`<!DOCTYPE html><html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word"><head><meta charset="utf-8"><title>${_escHtml(titleTxt)}</title><style>body{font-family:Calibri,Arial,sans-serif;margin:2cm;color:#1e293b;background:#fff}table{width:100%;border-collapse:collapse}.meta td{padding:4px 6px;font-size:10pt;vertical-align:top}.result-table th,.result-table td{padding:6px 12px}.result-table th{background:#1a2e44;color:#fff;font-size:11pt;text-align:left;font-weight:700}.footer{margin-top:20px;font-size:8pt;color:#94a3b8;text-align:center;border-top:1px solid #e2e8f0;padding-top:8px}</style></head><body><table style="border-bottom:2px solid #1a2e44;margin-bottom:14px;padding-bottom:10px"><tr><td style="width:72%"><h1 style="color:#1a2e44;font-size:16pt;margin:0 0 4px">${_escHtml(mfr)}</h1><div style="font-size:9pt;color:#64748b">${_escHtml(website)} | ${_escHtml(contact)} | info@opticsindia.com</div></td><td style="text-align:right;vertical-align:middle">${logoHtml}</td></tr></table><h2 style="background:#1a2e44;color:#fff;padding:8px 14px;margin-bottom:10px;font-size:14pt">${_escHtml(titleTxt)}</h2><table class="meta" style="margin-bottom:14px;background:#f8fafc;border:1px solid #e2e8f0"><tr><td><b>To / Vendor:</b></td><td>${_escHtml(vendor)}</td><td><b>Part No.:</b></td><td style="color:#92400e;font-weight:700">${_escHtml(partno)}</td><td><b>Date:</b></td><td>${_escHtml(dateVal)}</td></tr></table>${canvasImgTag}<table class="result-table"><tr><th>Parameter</th><th style="text-align:right">Value</th></tr>${trows}</table><div class="footer">Generated by OptiCost LRMCE v2.0 | ${_escHtml(mfr)} | ${_escHtml(website)}</div></body></html>`;
+
+  const logoHtml=_logoDataUrl?`<img src="${_logoDataUrl}" style="max-height:44px;max-width:110px;object-fit:contain"/>`:'';
+  const canvasCol=canvasDataUrl?`
+    <td style="width:38%;vertical-align:top;padding:0 16px 0 0">
+      <div style="background:#f1f3f5;border-radius:8px;padding:10px;text-align:center">
+        <div style="font-size:8pt;color:#374151;font-weight:700;letter-spacing:1px;margin-bottom:6px;text-transform:uppercase">Cross-Section Preview</div>
+        <img src="${canvasDataUrl}" style="width:100%;border-radius:5px;border:1px solid #c8d8e8;display:block"/>
+      </div>
+    </td>`:'';
+  const summaryCol=`
+    <td style="vertical-align:top;padding:0">
+      <table style="width:100%;border-collapse:collapse;border:1px solid #d1d9e2">
+        <tr><th colspan="2" style="background:#1a2e44;color:#fff;padding:6px 10px;font-size:9.5pt;text-align:left;font-weight:700">📐 ${_escHtml(titleTxt)}</th></tr>
+        ${trows}
+      </table>
+    </td>`;
+
+  // Landscape A4 via @page CSS (Word honours this for .doc HTML format)
+  const html=`<!DOCTYPE html>
+<html xmlns:o="urn:schemas-microsoft-com:office:office"
+      xmlns:w="urn:schemas-microsoft-com:office:word"
+      xmlns="http://www.w3.org/TR/REC-html40">
+<head>
+<meta charset="utf-8">
+<title>${_escHtml(titleTxt)}</title>
+<!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View><w:Zoom>90</w:Zoom><w:DoNotOptimizeForBrowser/></w:WordDocument></xml><![endif]-->
+<style>
+  @page WordSection1 { size:29.7cm 21cm; mso-page-orientation:landscape; margin:1.2cm 1.4cm; }
+  @page { size: A4 landscape; margin:1.2cm 1.4cm; }
+  div.WordSection1 { page:WordSection1; }
+  body { font-family:Calibri,Arial,sans-serif; font-size:10pt; color:#1e293b; background:#fff; margin:0; padding:0; }
+  table { border-collapse:collapse; }
+  .hdr-bar { background:#1a2e44; color:#fff; padding:6px 12px; }
+  .footer { font-size:7.5pt; color:#94a3b8; text-align:center; border-top:1px solid #e2e8f0; padding-top:5px; margin-top:10px; }
+</style>
+</head>
+<body>
+<div class="WordSection1">
+
+<!-- ── TOP HEADER ── -->
+<table style="width:100%;border-bottom:2px solid #1a2e44;margin-bottom:8px;padding-bottom:6px">
+  <tr>
+    <td style="vertical-align:bottom">
+      <div style="font-size:13pt;font-weight:700;color:#1a2e44;line-height:1.2">${_escHtml(mfr)}</div>
+      <div style="font-size:8pt;color:#64748b;margin-top:2px">${_escHtml(website)} &nbsp;|&nbsp; ${_escHtml(contact)} &nbsp;|&nbsp; info@opticsindia.com</div>
+    </td>
+    <td style="text-align:right;vertical-align:middle;width:130px">${logoHtml}</td>
+  </tr>
+</table>
+
+<!-- ── META ROW ── -->
+<table style="width:100%;background:#f0f4f8;border:1px solid #d1d9e2;margin-bottom:10px">
+  <tr>
+    <td style="padding:5px 10px;font-size:8.5pt;width:25%"><b style="color:#64748b">TO / VENDOR</b><br/><span style="color:#1e293b;font-weight:600">${_escHtml(vendor)}</span></td>
+    <td style="padding:5px 10px;font-size:8.5pt;border-left:1px solid #d1d9e2;width:35%"><b style="color:#64748b">TITLE</b><br/><span style="color:#1e293b;font-weight:600">${_escHtml(titleTxt)}</span></td>
+    <td style="padding:5px 10px;font-size:8.5pt;border-left:1px solid #d1d9e2;width:20%"><b style="color:#64748b">PART NO.</b><br/><span style="color:#92400e;font-weight:700">${_escHtml(partno)}</span></td>
+    <td style="padding:5px 10px;font-size:8.5pt;border-left:1px solid #d1d9e2;width:20%"><b style="color:#64748b">DATE</b><br/><span style="color:#1e293b;font-weight:600">${_escHtml(dateVal)}</span></td>
+  </tr>
+</table>
+
+<!-- ── BODY: cross-section LEFT | summary RIGHT (same as PNG) ── -->
+<table style="width:100%">
+  <tr>
+    ${canvasCol}
+    ${summaryCol}
+  </tr>
+</table>
+
+<div class="footer">Generated by OptiCost LRMCE v2.0 &nbsp;|&nbsp; ${_escHtml(mfr)} &nbsp;|&nbsp; ${_escHtml(website)}</div>
+</div>
+</body>
+</html>`;
+
   const blob=new Blob(['\ufeff'+html],{type:'application/vnd.ms-word;charset=utf-8'});
   const ts=new Date().toISOString().slice(0,10);
   const fname='OptiCost_'+ts+'.doc';
   _storeFile(fname,blob,(dataUri,err)=>{
     if(err)console.warn('IDB err:',err);
-    if(dataUri){_triggerDownload(dataUri,fname,'application/vnd.ms-word');}
-    showModal('✅ Word Saved',fname+' saved.\nIncludes cross-section view & full summary.\nUse share sheet to open in Word/Google Docs.');
+    _androidSaveOrShare(dataUri,fname,'application/msword',blob);
   });
 }
 
@@ -1389,15 +1613,6 @@ function _buildAndSaveXLSX(){
     if(err)console.warn('IDB err:',err);
     showModal('✅ Excel Saved',fname+' saved to Files tab. You can share it from there.');
   });
-}
-
-function saveReportImage(fmt){
-  if(fmt==='doc'){_saveReportHTML();return;}
-  if(!recs.length){showModal('No Data','Run a calculation first.');return;}
-  showModal('Building…','Generating PNG report…');
-  setTimeout(()=>{
-    try{_buildReportCanvas(cv=>{cv.toBlob(blob=>{_closeModal();try{cv.width=1;cv.height=1;}catch{}if(!blob){showModal('Error','Could not generate image.');return;}const ts=new Date().toISOString().slice(0,19).replace(/[T:]/g,'-');const fname='OptiCost_Report_'+ts+'.png';_storeFile(fname,blob,(dataUri,err)=>{if(err)console.warn('IDB store err:',err);if(dataUri)_showImageViewer(dataUri,fname);else showModal('Error','Could not save image.');});},'image/png');});}catch(e){_closeModal();showModal('Error','Image build failed: '+e.message);}
-  },80);
 }
 function _saveReportHTML(){
   if(!recs.length){showModal('No Data','Run a calculation first.');return;}
