@@ -1059,10 +1059,32 @@ function _triggerDownload(dataUri,fname,mimeType){
   }
   function _tryAnchor(){
     try{
-      const a=document.createElement('a');a.href=dataUri;a.download=fname;
+      // Convert data URI → Blob URL: avoids WebView crash on large data URIs
+      let hrefUrl=dataUri;
+      try{
+        const b64=dataUri.split(',')[1];
+        const bin=atob(b64);
+        const arr=new Uint8Array(bin.length);
+        for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);
+        const blob=new Blob([arr],{type:mimeType||'application/octet-stream'});
+        hrefUrl=URL.createObjectURL(blob);
+      }catch(e2){}
+      const a=document.createElement('a');a.href=hrefUrl;a.download=fname;
       document.body.appendChild(a);a.click();document.body.removeChild(a);
+      // Revoke after short delay
+      if(hrefUrl!==dataUri)setTimeout(()=>{try{URL.revokeObjectURL(hrefUrl);}catch(e){}},5000);
     }catch(e){
-      try{window.open(dataUri,'_blank');}catch(e2){}
+      // Last resort: try blob URL in new tab (safer than raw data URI for WebView)
+      try{
+        const b64=dataUri.split(',')[1];
+        const bin=atob(b64);
+        const arr=new Uint8Array(bin.length);
+        for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);
+        const blob=new Blob([arr],{type:mimeType||'application/octet-stream'});
+        const burl=URL.createObjectURL(blob);
+        window.open(burl,'_blank');
+        setTimeout(()=>{try{URL.revokeObjectURL(burl);}catch(e){}},8000);
+      }catch(e2){}
     }
   }
   if(!_tryShare())_tryAnchor();
@@ -1238,6 +1260,7 @@ function saveReportImage(fmt){
   },80);
 }
 
+function _escHtml(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function saveReportWord(){
   if(!recs.length){showModal('No Data','Calculate items first.');return;}
   refreshSnapHeader();
@@ -1246,42 +1269,46 @@ function saveReportWord(){
         vendor=document.getElementById('rpt-vendor').value.trim()||'—',
         titleTxt=document.getElementById('rpt-title').value.trim()||'Lens Raw Material Cost Estimation',
         partno=document.getElementById('rpt-partno').value.trim()||'—';
+  const website=(document.getElementById('rpt-website')||{}).value||'www.opticsindia.com';
+  const contact=(document.getElementById('rpt-contact')||{}).value||'+91-9886654729';
+  // Cross-section canvas image
+  const srcCanvas=document.getElementById('res-canvas')||document.getElementById('c-canvas')||document.getElementById('r-canvas');
+  const canvasImgTag=(srcCanvas&&srcCanvas.width>10)?
+    `<div style="text-align:center;margin:10px 0;background:#f0f4f8;border-radius:8px;padding:10px"><div style="font-size:9pt;color:#374151;font-weight:700;margin-bottom:6px;letter-spacing:1px">CROSS-SECTION PREVIEW</div><img src="${srcCanvas.toDataURL('image/png')}" style="max-width:100%;border-radius:6px;border:1px solid #d1d5db"/></div>`:
+    '';
+  const logoHtml=_logoDataUrl?`<img src="${_logoDataUrl}" style="max-height:55px;max-width:140px;object-fit:contain"/>`:`<div style="font-size:9pt;color:#94a3b8;font-weight:700">OPTICA</div>`;
   const rtEl=document.getElementById('result-text');
-  const rows=rtEl?[...rtEl.querySelectorAll('.res-row')]:[];
   let trows='';
-  rows.forEach(r=>{
-    const lbl=r.querySelector('input');const val=r.querySelectorAll('input')[1];
-    if(lbl&&val){
-      const isG=r.querySelector('.res-val-inp.green'),isA=r.querySelector('.res-val-inp.amber');
-      const bg=isG?'#E2EFDA':isA?'#FFF2CC':'#FFFFFF';
-      const fc=isG?'#16A34A':isA?'#92400E':'#000000';
-      trows+=`<w:tr><w:tc><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="${bg.replace('#','')}"/></w:tcPr><w:p><w:r><w:t>${lbl.value}</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="${bg.replace('#','')}"/></w:tcPr><w:p><w:pPr><w:jc w:val="right"/></w:pPr><w:r><w:rPr><w:b/><w:color w:val="${fc.replace('#','')}"/></w:rPr><w:t>${val.value}</w:t></w:r></w:p></w:tc></w:tr>`;
-    }
-  });
-  const docxml=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas" xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>${mfr}</w:t></w:r></w:p><w:p><w:r><w:rPr><w:color w:val="555555"/></w:rPr><w:t>www.opticsindia.com | +91-9886654729</w:t></w:r></w:p><w:p><w:r><w:t>To/Vendor: ${vendor}   Title: ${titleTxt}   Part No: ${partno}   Date: ${dateVal}</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w="9000" w:type="dxa"/><w:tblBorders><w:top w:val="single" w:sz="4"/><w:left w:val="single" w:sz="4"/><w:bottom w:val="single" w:sz="4"/><w:right w:val="single" w:sz="4"/><w:insideH w:val="single" w:sz="4"/><w:insideV w:val="single" w:sz="4"/></w:tblBorders></w:tblPr><w:tr><w:tc><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="1A2E44"/></w:tcPr><w:p><w:r><w:rPr><w:b/><w:color w:val="FFFFFF"/></w:rPr><w:t>Parameter</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="1A2E44"/></w:tcPr><w:p><w:r><w:rPr><w:b/><w:color w:val="FFFFFF"/></w:rPr><w:t>Value</w:t></w:r></w:p></w:tc></w:tr>${trows}</w:tbl><w:p><w:r><w:rPr><w:color w:val="888888"/><w:sz w:val="16"/></w:rPr><w:t>Generated by OptiCost LRMCE v2.0 | www.opticsindia.com</w:t></w:r></w:p><w:sectPr/></w:body></w:document>`;
-  const relsXml='<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>';
-  const ct='<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>';
-  const _makeDocx=()=>{
-    const zip=new JSZip();
-    zip.file('[Content_Types].xml',ct);
-    zip.folder('_rels').file('.rels',relsXml);
-    zip.folder('word').file('document.xml',docxml);
-    zip.generateAsync({type:'blob',mimeType:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'}).then(blob=>{
-      const ts=new Date().toISOString().slice(0,10);
-      const fname='OptiCost_'+ts+'.docx';
-      _storeFile(fname,blob,(dataUri,err)=>{
-        if(dataUri){_triggerDownload(dataUri,fname,'application/vnd.openxmlformats-officedocument.wordprocessingml.document');}
-        showModal('✅ Word Saved',fname+' saved. Use share sheet to open in Word/Google Docs.');
+  if(rtEl){
+    // Walk sections for headers + rows
+    let hasSections=false;
+    rtEl.querySelectorAll('.res-section').forEach(sec=>{
+      const hdrEl=sec.querySelector('.res-sec-hdr');
+      if(hdrEl){hasSections=true;trows+=`<tr style="background:#1a2e44"><td colspan="2" style="padding:7px 12px;color:#ffffff;font-weight:700;font-size:11pt;letter-spacing:1px">${_escHtml(hdrEl.textContent.trim())}</td></tr>`;}
+      sec.querySelectorAll('.res-row').forEach(r=>{
+        const lbl=r.querySelector('input:first-child');const val=r.querySelector('.res-val-inp');
+        if(lbl&&val){const isG=val.classList.contains('green'),isA=val.classList.contains('amber');const bg=isG?'#f0fdf4':isA?'#fffbeb':'#ffffff';const fc=isG?'#166534':isA?'#92400e':'#111827';const fw=isG||isA?'bold':'normal';trows+=`<tr style="background:${bg}"><td style="padding:6px 12px;font-size:11pt;color:#475569;font-weight:600;border-bottom:1px solid #e2e8f0;width:50%">${_escHtml(lbl.value)}</td><td style="padding:6px 12px;font-size:11pt;color:${fc};font-weight:${fw};text-align:right;border-bottom:1px solid #e2e8f0">${_escHtml(val.value)}</td></tr>`;}
       });
     });
-  };
-  if(typeof JSZip==='undefined'){
-    const s=document.createElement('script');
-    s.src='https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
-    s.onload=_makeDocx;s.onerror=()=>showModal('Error','Network required to generate Word file.');
-    document.head.appendChild(s);
-  } else _makeDocx();
+    if(!hasSections){
+      rtEl.querySelectorAll('.res-row').forEach(r=>{
+        const lbl=r.querySelector('input:first-child');const val=r.querySelector('.res-val-inp');
+        if(lbl&&val){const isG=val.classList.contains('green'),isA=val.classList.contains('amber');const bg=isG?'#f0fdf4':isA?'#fffbeb':'#ffffff';const fc=isG?'#166534':isA?'#92400e':'#111827';const fw=isG||isA?'bold':'normal';trows+=`<tr style="background:${bg}"><td style="padding:6px 12px;font-size:11pt;color:#475569;font-weight:600;border-bottom:1px solid #e2e8f0;width:50%">${_escHtml(lbl.value)}</td><td style="padding:6px 12px;font-size:11pt;color:${fc};font-weight:${fw};text-align:right;border-bottom:1px solid #e2e8f0">${_escHtml(val.value)}</td></tr>`;
+        }
+      });
+    }
+  }
+  const html=`<!DOCTYPE html><html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word"><head><meta charset="utf-8"><title>${_escHtml(titleTxt)}</title><style>body{font-family:Calibri,Arial,sans-serif;margin:2cm;color:#1e293b;background:#fff}table{width:100%;border-collapse:collapse}.meta td{padding:4px 6px;font-size:10pt;vertical-align:top}.result-table th,.result-table td{padding:6px 12px}.result-table th{background:#1a2e44;color:#fff;font-size:11pt;text-align:left;font-weight:700}.footer{margin-top:20px;font-size:8pt;color:#94a3b8;text-align:center;border-top:1px solid #e2e8f0;padding-top:8px}</style></head><body><table style="border-bottom:2px solid #1a2e44;margin-bottom:14px;padding-bottom:10px"><tr><td style="width:72%"><h1 style="color:#1a2e44;font-size:16pt;margin:0 0 4px">${_escHtml(mfr)}</h1><div style="font-size:9pt;color:#64748b">${_escHtml(website)} | ${_escHtml(contact)} | info@opticsindia.com</div></td><td style="text-align:right;vertical-align:middle">${logoHtml}</td></tr></table><h2 style="background:#1a2e44;color:#fff;padding:8px 14px;margin-bottom:10px;font-size:14pt">${_escHtml(titleTxt)}</h2><table class="meta" style="margin-bottom:14px;background:#f8fafc;border:1px solid #e2e8f0"><tr><td><b>To / Vendor:</b></td><td>${_escHtml(vendor)}</td><td><b>Part No.:</b></td><td style="color:#92400e;font-weight:700">${_escHtml(partno)}</td><td><b>Date:</b></td><td>${_escHtml(dateVal)}</td></tr></table>${canvasImgTag}<table class="result-table"><tr><th>Parameter</th><th style="text-align:right">Value</th></tr>${trows}</table><div class="footer">Generated by OptiCost LRMCE v2.0 | ${_escHtml(mfr)} | ${_escHtml(website)}</div></body></html>`;
+  const blob=new Blob(['\ufeff'+html],{type:'application/vnd.ms-word;charset=utf-8'});
+  const ts=new Date().toISOString().slice(0,10);
+  const fname='OptiCost_'+ts+'.doc';
+  _storeFile(fname,blob,(dataUri,err)=>{
+    if(err)console.warn('IDB err:',err);
+    if(dataUri){_triggerDownload(dataUri,fname,'application/vnd.ms-word');}
+    showModal('✅ Word Saved',fname+' saved.\nIncludes cross-section view & full summary.\nUse share sheet to open in Word/Google Docs.');
+  });
 }
+
 
 function _buildAndSaveXLSX(){
   // Sort headers: put label-like keys first
@@ -1371,40 +1398,6 @@ function saveReportImage(fmt){
   setTimeout(()=>{
     try{_buildReportCanvas(cv=>{cv.toBlob(blob=>{_closeModal();try{cv.width=1;cv.height=1;}catch{}if(!blob){showModal('Error','Could not generate image.');return;}const ts=new Date().toISOString().slice(0,19).replace(/[T:]/g,'-');const fname='OptiCost_Report_'+ts+'.png';_storeFile(fname,blob,(dataUri,err)=>{if(err)console.warn('IDB store err:',err);if(dataUri)_showImageViewer(dataUri,fname);else showModal('Error','Could not save image.');});},'image/png');});}catch(e){_closeModal();showModal('Error','Image build failed: '+e.message);}
   },80);
-}
-
-function saveReportWord(){
-  if(!recs.length){showModal('No Data','Calculate items first.');return;}
-  refreshSnapHeader();
-  const _dvx=document.getElementById('rpt-date').value.trim(),dateVal=_dvx?_dvx.split('-').reverse().join('/'):new Date().toLocaleDateString('en-GB');
-  const mfr=document.getElementById('rpt-mfr').value.trim()||'Optics & Allied Engg. Pvt. Ltd. (OPTICA)',
-        vendor=document.getElementById('rpt-vendor').value.trim()||'—',
-        titleTxt=document.getElementById('rpt-title').value.trim()||'Lens Raw Material Cost Estimation',
-        partno=document.getElementById('rpt-partno').value.trim()||'—';
-  const rtEl=document.getElementById('result-text');
-  const rows=rtEl?[...rtEl.querySelectorAll('.res-row')]:[]; 
-  let tbl='<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%;font-family:Calibri,Arial;font-size:11pt">';
-  tbl+='<tr style="background:#1a2e44;color:white"><th>Parameter</th><th>Value</th></tr>';
-  rows.forEach(r=>{
-    const lbl=r.querySelector('input:first-child');
-    const val=r.querySelector('input:last-child');
-    if(lbl&&val){
-      const isGreen=r.classList.contains('res-row-green'),isAmber=r.classList.contains('res-row-amber');
-      const bg=isGreen?'#e6ffe6':isAmber?'#fff8e1':'#ffffff';
-      const fc=isGreen?'#16a34a':isAmber?'#92400e':'#111827';
-      tbl+=`<tr style="background:${bg}"><td>${lbl.value}</td><td style="text-align:right;color:${fc};font-weight:${isGreen||isAmber?'bold':'normal'}">${val.value}</td></tr>`;
-    }
-  });
-  tbl+='</table>';
-  const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word"><head><meta charset="utf-8"><title>${mfr}</title></head><body style="font-family:Calibri,Arial;margin:2cm"><h2 style="color:#1a2e44">${mfr}</h2><p style="color:#555">www.opticsindia.com | +91-9886654729</p><hr><table width="100%"><tr><td><b>To/Vendor:</b> ${vendor}</td><td><b>Title:</b> ${titleTxt}</td><td><b>Part No:</b> ${partno}</td><td><b>Date:</b> ${dateVal}</td></tr></table><br>${tbl}<br><p style="color:#888;font-size:9pt">Generated by OptiCost LRMCE v2.0 | www.opticsindia.com</p></body></html>`;
-  const blob=new Blob(['\ufeff'+html],{type:'application/vnd.ms-word;charset=utf-8'});
-  const ts=new Date().toISOString().slice(0,10);
-  const fname='OptiCost_'+ts+'.doc';
-  _storeFile(fname,blob,(dataUri,err)=>{
-    if(err)console.warn('IDB err:',err);
-    if(dataUri){_triggerDownload(dataUri,fname,'application/vnd.ms-word');}
-    showModal('✅ Word Saved',fname+' saved. Use share sheet to open in Word.');
-  });
 }
 function _saveReportHTML(){
   if(!recs.length){showModal('No Data','Run a calculation first.');return;}
